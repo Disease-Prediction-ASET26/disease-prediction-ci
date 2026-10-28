@@ -1,0 +1,14 @@
+name: Publish or clean application images
+description: Publish an already scanned image or clean preview versions only.
+inputs:
+  command:
+    description: publish or cleanup
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        REGISTRY_COMMAND: ${{ inputs.command }}
+        REGISTRY_SCRIPT: ${{ github.action_path }}/registry.py
+      run: python3 "$REGISTRY_SCRIPT" "$REGISTRY_COMMAND"

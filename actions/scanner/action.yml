@@ -1,0 +1,14 @@
+name: Dependency-Check snapshot
+description: Update, inspect, or scan with a private database snapshot.
+inputs:
+  command:
+    description: update, scan, or smoke
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        SCANNER_COMMAND: ${{ inputs.command }}
+        SCANNER_SCRIPT: ${{ github.action_path }}/scanner.py
+      run: python3 "$SCANNER_SCRIPT" "$SCANNER_COMMAND"

@@ -1,0 +1,22 @@
+name: CI result
+description: Fail on unsuccessful enabled stages and list missing prerequisites.
+inputs:
+  needs:
+    description: JSON job results
+    required: true
+  disabled:
+    description: JSON map of disabled jobs to activation requirements
+    default: '{}'
+  enabled:
+    description: JSON list of configured jobs whose skips must fail
+    default: '[]'
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        CI_NEEDS: ${{ inputs.needs }}
+        CI_DISABLED: ${{ inputs.disabled }}
+        CI_ENABLED: ${{ inputs.enabled }}
+        CI_SUMMARY_SCRIPT: ${{ github.action_path }}/summary.py
+      run: python3 "$CI_SUMMARY_SCRIPT"
