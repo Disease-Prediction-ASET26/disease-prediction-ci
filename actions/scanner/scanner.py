@@ -167,7 +167,7 @@ def smoke(image, snapshot, scratch, *, reports=None):
         for dependency in report.get("dependencies", [])
         for v in dependency.get("vulnerabilities", [])
     ]
-    scores = [v.get("cvssv3", {}).get("baseScore", 0) for v in findings]
+    scores = [(v.get("cvssv3") or {}).get("baseScore") or 0 for v in findings]
     if result.returncode != 15 or not any(float(score) >= 7 for score in scores):
         raise ValueError(
             "Scanner must reject the Log4j fixture with exit code 15 and a CVSS >=7 finding"
