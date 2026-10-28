@@ -69,6 +69,23 @@ class WorkflowTests(unittest.TestCase):
             r"^FROM owasp/dependency-check:13\.0\.0@sha256:[0-9a-f]{64}$",
         )
 
+    def test_database_cache_survives_failed_smoke(self):
+        steps = workflow("owasp-refresh.yml")["jobs"]["refresh"]["steps"]
+        refresh = next(i for i, step in enumerate(steps) if step.get("id") == "refresh")
+        save = next(
+            i
+            for i, step in enumerate(steps)
+            if step.get("uses", "").startswith("actions/cache/save@")
+        )
+        smoke = next(
+            i
+            for i, step in enumerate(steps)
+            if step.get("with", {}).get("command") == "smoke"
+        )
+        self.assertLess(refresh, save)
+        self.assertLess(save, smoke)
+        self.assertIn("steps.refresh.outcome == 'success'", steps[save]["if"])
+
     def test_actions_are_immutable_and_checkout_does_not_persist_credentials(self):
         for path in [
             *(ROOT / ".github/workflows").glob("*.yml"),
