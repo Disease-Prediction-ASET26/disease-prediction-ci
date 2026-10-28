@@ -2,18 +2,21 @@
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import tempfile
-import zipfile
+import urllib.request
 from pathlib import Path
 
 VERSION = "13.0.0"
 BASE = "owasp/dependency-check:13.0.0@sha256:0e8f69ad5b00d62000937f4e57189812343f6903d9c83ee712012d51542a020a"
 CHANNEL = "ghcr.io/disease-prediction-aset26/owasp-dependency-check:dc-13.0.0"
 MAX_AGE = dt.timedelta(hours=48)
+FIXTURE_URL = "https://repo.maven.apache.org/maven2/org/apache/logging/log4j/log4j-core/2.14.1/log4j-core-2.14.1.jar"
+FIXTURE_SHA512 = "6e41ff42f12deedb8da06cbed73d0a9a5389660b7ee058436f8fcb6b14a6ab3105faf8e3f2c007d38ccc85af1e704505b84be5a80d8e68a434aae82b54b85f70"
 
 
 def run(*args, **kwargs):
@@ -118,25 +121,21 @@ def scan(image, data, source, reports, *, python=False, check=True):
 
 
 def vulnerable_fixture(path):
-    """Identify a known vulnerable Java dependency without shipping its code."""
+    """Download a pinned scanner fixture without executing the JAR."""
     path.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(path / "log4j-core-2.14.1.jar", "w") as jar:
-        jar.writestr(
-            "META-INF/MANIFEST.MF",
-            "Manifest-Version: 1.0\nImplementation-Title: Apache Log4j Core\nImplementation-Version: 2.14.1\n\n",
-        )
-        jar.writestr(
-            "META-INF/maven/org.apache.logging.log4j/log4j-core/pom.properties",
-            "groupId=org.apache.logging.log4j\nartifactId=log4j-core\nversion=2.14.1\n",
-        )
+    with urllib.request.urlopen(FIXTURE_URL, timeout=60) as response:
+        data = response.read(3 * 1024 * 1024)
+    if hashlib.sha512(data).hexdigest() != FIXTURE_SHA512:
+        raise ValueError("Log4j fixture checksum does not match")
+    (path / "log4j-core-2.14.1.jar").write_bytes(data)
 
 
-def smoke(image, snapshot, scratch):
+def smoke(image, snapshot, scratch, *, reports=None):
     source = scratch / "fixture"
     vulnerable_fixture(source)
     data = scratch / "smoke-data"
     shutil.copytree(snapshot / "data", data)
-    reports = scratch / "smoke-reports"
+    reports = reports or scratch / "smoke-reports"
     result = scan(image, data, source, reports, check=False)
     report = json.loads((reports / "dependency-check-report.json").read_text())
     findings = [
@@ -157,14 +156,15 @@ def update(destination, *, bootstrap=False):
     key = os.environ.get("NVD_API_KEY", "")
     if not key or any(character in key for character in "\r\n"):
         raise ValueError("Configure a valid NVD_API_KEY secret in the CI repository")
-    if destination.exists():
-        raise ValueError("Refuse to overwrite an existing prepared snapshot")
     with tempfile.TemporaryDirectory() as directory:
         scratch = Path(directory)
         snapshot = scratch / "snapshot"
         snapshot.mkdir()
         if bootstrap:
             (snapshot / "data").mkdir()
+        elif destination.exists():
+            validate_snapshot(destination, fresh=False)
+            shutil.copytree(destination, snapshot, dirs_exist_ok=True)
         else:
             extract_snapshot(resolve_image(CHANNEL), snapshot)
             validate_snapshot(snapshot, fresh=False)
@@ -203,10 +203,13 @@ def update(destination, *, bootstrap=False):
             + "\n"
         )
         validate_snapshot(snapshot)
-        smoke(BASE, snapshot, scratch)
         destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            shutil.rmtree(destination)
         shutil.copytree(snapshot, destination)
-    summary("OWASP database refresh and vulnerable-fixture smoke test passed.")
+    summary(
+        "OWASP database refreshed. Publication still requires the packaged smoke test."
+    )
 
 
 def main():
@@ -235,7 +238,9 @@ def main():
         )
         output("scanner-image", image)
         if args.command == "smoke":
-            smoke(image, snapshot, scratch)
+            smoke(
+                image, snapshot, scratch, reports=Path("reports/owasp-smoke").resolve()
+            )
         else:
             source = Path(os.environ["SCAN_PATH"]).resolve(strict=True)
             scan(
