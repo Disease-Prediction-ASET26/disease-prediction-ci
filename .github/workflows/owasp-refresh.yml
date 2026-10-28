@@ -1,0 +1,75 @@
+name: Refresh OWASP snapshot
+on:
+  push:
+    branches:
+    - main
+    paths:
+    - scanner/**
+    - actions/scanner/**
+    - .github/workflows/owasp-refresh.yml
+  schedule:
+  - cron: 17 3 * * *
+  workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: Create a fresh database for first use or an engine upgrade
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: owasp-snapshot-writer
+  cancel-in-progress: false
+jobs:
+  refresh:
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.OWASP_UPDATER_ENABLED
+      == 'true') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@619dda506a188b21d5918a9e9e301713fb607b06 # tools-v1.0.0
+      name: Refresh restored database and prove vulnerability gate
+      with:
+        command: update
+      env:
+        NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        SCANNER_BOOTSTRAP: ${{ inputs.bootstrap || false }}
+    - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+    - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      name: Package candidate snapshot
+      with:
+        context: scanner
+        file: scanner/Dockerfile
+        load: true
+        push: false
+        platforms: linux/amd64
+        provenance: false
+        sbom: false
+        tags: odc-candidate:checked
+        cache-from: type=gha,scope=owasp-snapshot
+        cache-to: type=gha,mode=max,scope=owasp-snapshot
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@619dda506a188b21d5918a9e9e301713fb607b06 # tools-v1.0.0
+      name: Verify packaged snapshot and vulnerable fixture
+      with:
+        command: smoke
+    - name: Publish successful snapshot
+      run: |
+        image="ghcr.io/disease-prediction-aset26/owasp-dependency-check"
+        unique="dc-13.0.0-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+        docker tag odc-candidate:checked "$image:$unique"
+        docker push "$image:$unique"
+        docker tag odc-candidate:checked "$image:dc-13.0.0"
+        docker push "$image:dc-13.0.0"
+        digest="$(docker image inspect "$image:$unique" --format '{{index .RepoDigests 0}}')"
+        echo "Published OWASP snapshot: \`$digest\`" >> "$GITHUB_STEP_SUMMARY"

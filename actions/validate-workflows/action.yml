@@ -1,0 +1,17 @@
+name: Validate GitHub Actions
+description: Run checksum-verified actionlint with the runner's ShellCheck.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        validator_dir="$(mktemp -d)"
+        trap 'rm -rf "$validator_dir"' EXIT
+        curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+          https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+          --output "$validator_dir/actionlint.tar.gz"
+        echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $validator_dir/actionlint.tar.gz" | sha256sum --check
+        tar -xzf "$validator_dir/actionlint.tar.gz" -C "$validator_dir" actionlint
+        command -v shellcheck
+        "$validator_dir/actionlint" -color .github/workflows/*.yml
