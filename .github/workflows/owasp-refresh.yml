@@ -45,7 +45,7 @@ jobs:
         path: scanner/snapshot
         key: odc-data-13.0.0-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: odc-data-13.0.0-
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@610316be42779af70edbc6362fc4d73cb6025f93 # tools-v1.0.1
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@a748877fcc17ae5ebb17b0a9f053471a42636761 # seed support
       name: Refresh NVD data
       with:
         command: update
@@ -73,7 +73,7 @@ jobs:
         tags: odc-candidate:checked
         cache-from: type=gha,scope=owasp-snapshot
         cache-to: type=gha,mode=max,scope=owasp-snapshot
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@610316be42779af70edbc6362fc4d73cb6025f93 # tools-v1.0.1
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@a748877fcc17ae5ebb17b0a9f053471a42636761 # seed support
       name: Verify packaged snapshot and vulnerable fixture
       with:
         command: smoke
