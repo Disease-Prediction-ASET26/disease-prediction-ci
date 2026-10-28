@@ -1,10 +1,10 @@
 # Disease Prediction CI
 
-Shared security workflows for the private AI, backend, and frontend
-repositories. Application commands stay in each application's
+This repository contains shared security workflows for AI, backend, and
+frontend. Each application keeps its commands in
 `.github/workflows/ci.yml`.
 
-## Initial state
+## Current checks
 
 | Repository | Enabled checks                                                            | Missing prerequisites                                             |
 | ---------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------- |
@@ -12,14 +12,13 @@ repositories. Application commands stay in each application's
 | Backend    | Workflow lint, Maven package, Spring context smoke test, Dependency-Check | Java lint, unit tests, Dockerfile                                 |
 | Frontend   | Workflow lint and readiness summary                                       | Runtime, package manager, application commands, tests, Dockerfile |
 
-SonarQube and container publication default to disabled. An unset enable
-variable means `false`. The final `ci` job fails on unsuccessful enabled checks.
-It lists disabled checks and their prerequisites. Disabled tests provide no
-coverage. The AI build currently checks Python compilation only. The backend
-smoke test uses the existing application test. Application failures remain
-visible.
+SonarQube and container publication are disabled by default. An unset enable
+variable means `false`. A failed enabled check makes the `ci` job fail. Its
+summary lists disabled checks and their prerequisites. Disabled tests provide
+no coverage. The AI build checks Python compilation only. The backend smoke
+test runs the existing application test. Application failures remain visible.
 
-## Activate shared scanning
+## Set up shared scanning
 
 Use a GitHub account with administration access to these repositories. The CI
 repository must permit reuse from repositories in this organization:
@@ -41,12 +40,12 @@ organization**.
    gh run list --repo Disease-Prediction-ASET26/disease-prediction-ci --workflow owasp-refresh.yml
    ```
 
-3. Wait for the database update, packaged-image smoke test, and publication to pass.
+3. Wait for the database update, smoke test, and publication to pass.
 4. Open the private `owasp-dependency-check` GHCR package. Under **Manage
-   Actions access**, grant `disease-prediction-ci` **Write** access and each
-   application repository **Read** access. If inherited permissions prevent
-   changes, remove inheritance first. This overwrites existing package
-   permissions, so restore any required team access.
+   Actions access**, give `disease-prediction-ci` **Write** access. Give each
+   application repository **Read** access.
+   If inherited permissions prevent changes, remove inheritance. Restore any
+   team access that the change removes.
 5. Enable daily updates after the first successful snapshot:
 
    ```sh
@@ -56,38 +55,39 @@ organization**.
 6. Submit the application `.github/` changes through internal branches. Keep
    fork PR workflows disabled in every repository.
 
-The updater runs at `03:17 UTC`. It restores `dc-13.0.0`, updates NVD records,
-and publishes only after smoke checks pass. It updates the stable channel after
-the unique version succeeds. A failed update preserves the previous published
-snapshot. Manual `bootstrap=true` starts from the pinned OWASP database. Use it
-for first use or a reviewed database upgrade, not registry errors.
+The updater runs at `03:17 UTC`. It restores `dc-13.0.0` and updates NVD records.
+It publishes a snapshot only after the smoke test passes. A failed update
+preserves the previous snapshot.
+
+Use `bootstrap=true` for first use or a reviewed database upgrade. The seed is
+pinned to an image digest. Before a later bootstrap, check its age and
+compatibility. If necessary, review and update the digest.
 
 The updater caches refreshed data before packaging and smoke checks. If a later
 step fails, retry with `bootstrap=false` to reuse that data. A cache miss restores
 the published compatible snapshot. Failed NVD updates never replace cached data.
 
-Consumers resolve the channel to a digest and record it in the summary. Each
-scan uses a separate writable database copy with `--noupdate`. Missing,
-incompatible, or more than 48-hour-old snapshots fail the scan. The NVD key
-stays outside image layers, artifacts, and caches.
+Each scan resolves the channel to a digest and records it in the summary. Each
+scan uses its own writable database copy with `--noupdate`. Missing,
+incompatible, or older-than-48-hour snapshots fail the scan. The NVD key stays
+outside image layers, artifacts, and caches.
 
-## Application stages
+## Enable application stages
 
-Provide missing application commands and tests before changing their explicit
-`false` job conditions. When a stage becomes active, update its `ci` prerequisite
-message. Keep `unit-test` separate from `integration-test`. A zero-test
-run must not count as a passing test suite.
+Add the missing commands and tests before changing a `false` job condition.
+When a stage becomes active, update its `ci` prerequisite message. Keep
+`unit-test` and `integration-test` separate. A run with zero tests must fail.
 
-Backend build artifacts preserve the JAR and compiled classes. OWASP scans this
-artifact. AI scanning resolves application dependencies in a separate virtual
-environment, then audits the complete pinned result. Audit tooling stays outside
-that environment. Python Dependency-Check analyzers are experimental, so
-`pip-audit` also runs. OSS Index remains disabled because it requires separate
-credentials.
+The backend build artifact contains the JAR and compiled classes. OWASP scans
+that artifact. AI CI resolves application dependencies in a separate virtual
+environment. It audits the complete resolved set. Audit tools stay outside
+that environment. The Python Dependency-Check analyzers are experimental.
+`pip-audit` provides an additional check. OSS Index is disabled because it
+requires separate credentials.
 
-The gates fail at Dependency-Check CVSS 7, Trivy HIGH/CRITICAL, or any pip-audit
-advisory. Unfixed Trivy findings also fail. Scanner errors remain failures.
-Reports expire after three days.
+Dependency-Check fails at CVSS 7 or higher. Trivy fails on HIGH or CRITICAL
+findings, including unfixed findings. `pip-audit` fails on any advisory. Scanner
+errors fail the job. Reports are retained for three days.
 
 ## Containers and PR previews
 
@@ -96,29 +96,28 @@ variable to `true`. For the backend, use the downloaded `target/` artifact in
 the Dockerfile. Provide `.dockerignore` with the application Dockerfile. Exclude
 secrets, local environments, test data, and Git metadata.
 
-The container workflow builds one `linux/amd64` image, scans it, and publishes
-that same image. It compares the remote manifest's image configuration digest
-with the image ID recorded before Trivy. No image archive passes between jobs.
-BuildKit caches layers through GitHub Actions.
+The container workflow builds and scans one `linux/amd64` image. It publishes
+that same image. It compares the remote image configuration digest with the
+image ID recorded before Trivy. BuildKit caches layers through GitHub Actions.
 
 | Build       | Private package                               | Tags                                                              |
 | ----------- | --------------------------------------------- | ----------------------------------------------------------------- |
 | Internal PR | `ghcr.io/disease-prediction-aset26/<repo>-pr` | Unique `pr-<number>-<head-sha>-<run>-<attempt>` and `pr-<number>` |
 | Main        | `ghcr.io/disease-prediction-aset26/<repo>`    | Unique `sha-<commit>-<run>-<attempt>` and `main`                  |
 
-The summary contains the image digest. When a test needs an exact image, use its
-digest. Private pulls outside Actions need a suitable GHCR read credential.
-Never publish application secrets in image layers.
+The summary contains the image digest. Use the digest to select an exact image.
+Private pulls outside Actions need a GHCR read credential. Do not put application
+secrets in image layers.
 
 Cleanup retains the current successful preview until its replacement passes and
 publishes. A closed internal PR triggers cleanup immediately. Nightly
 reconciliation runs at `03:47 UTC`. Cleanup preserves other PRs, unknown tags,
 and all production packages. Superseded builds cannot move the preview alias.
 Publication and cleanup share a repository concurrency group. GitHub can replace
-pending jobs in a concurrency group. Rerun a cancelled pending build if its
-preview is still needed. The package must grant its application repository
-**Admin** access for version deletion. Workflow-created packages normally grant
-this automatically.
+pending jobs in a concurrency group. If a pending build is cancelled and its
+preview is still needed, rerun the build. The preview package must grant its
+application repository **Admin** access for version deletion. Workflow-created
+packages normally grant this automatically.
 
 ## SonarQube
 
@@ -138,11 +137,11 @@ a separate product/license decision. Expected coverage paths are AI
 `coverage/lcov.info`. Application teams must supply coverage generation and
 artifact transfer before claiming coverage in SonarQube.
 
-## Validate and release changes
+## Check and release changes
 
-Create a feature branch before changing a repository. Link its PR to the tracking
-issue. Merge the PR after its required checks pass. Do not push implementation
-changes directly to `main`.
+Create a feature branch before changing a repository. Link its PR to the
+tracking issue. Merge the PR after its required checks pass. Do not push
+implementation changes directly to `main`.
 
 Use Python 3.13 and the versions recorded in
 [TOOL-VERSIONS.md](TOOL-VERSIONS.md).
