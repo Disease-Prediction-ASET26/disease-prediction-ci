@@ -38,7 +38,7 @@ jobs:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ github.token }}
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@2b3b9c222281391672abba03404c1421bf687210 # tools-v1.0.0
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@619dda506a188b21d5918a9e9e301713fb607b06 # tools-v1.0.0
       name: Refresh restored database and prove vulnerability gate
       with:
         command: update
@@ -59,7 +59,7 @@ jobs:
         tags: odc-candidate:checked
         cache-from: type=gha,scope=owasp-snapshot
         cache-to: type=gha,mode=max,scope=owasp-snapshot
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@2b3b9c222281391672abba03404c1421bf687210 # tools-v1.0.0
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@619dda506a188b21d5918a9e9e301713fb607b06 # tools-v1.0.0
       name: Verify packaged snapshot and vulnerable fixture
       with:
         command: smoke

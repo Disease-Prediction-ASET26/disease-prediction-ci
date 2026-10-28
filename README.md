@@ -133,6 +133,10 @@ artifact transfer before claiming coverage in SonarQube.
 
 ## Validate and release changes
 
+Create a feature branch before changing a repository. Link its PR to the tracking
+issue. Merge the PR after its required checks pass. Do not push implementation
+changes directly to `main`.
+
 Use Python 3.13 and the versions recorded in
 [TOOL-VERSIONS.md](TOOL-VERSIONS.md).
 
