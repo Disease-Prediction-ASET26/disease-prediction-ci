@@ -42,7 +42,10 @@ organization**.
 
 3. Wait for the database update, packaged-image smoke test, and publication to pass.
 4. Open the private `owasp-dependency-check` GHCR package. Under **Manage
-   Actions access**, grant each application repository **Read** access.
+   Actions access**, grant `disease-prediction-ci` **Write** access and each
+   application repository **Read** access. If inherited permissions prevent
+   changes, remove inheritance first. This overwrites existing package
+   permissions, so restore any required team access.
 5. Enable daily updates after the first successful snapshot:
 
    ```sh
