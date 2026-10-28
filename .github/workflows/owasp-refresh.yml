@@ -38,13 +38,27 @@ jobs:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ github.token }}
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@619dda506a188b21d5918a9e9e301713fb607b06 # tools-v1.0.0
-      name: Refresh restored database and prove vulnerability gate
+    - name: Restore NVD data
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      if: ${{ !inputs.bootstrap }}
+      with:
+        path: scanner/snapshot
+        key: odc-data-13.0.0-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: odc-data-13.0.0-
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@610316be42779af70edbc6362fc4d73cb6025f93 # tools-v1.0.1
+      name: Refresh NVD data
       with:
         command: update
       env:
         NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         SCANNER_BOOTSTRAP: ${{ inputs.bootstrap || false }}
+      id: refresh
+    - name: Cache refreshed data
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      if: ${{ always() && steps.refresh.outcome == 'success' }}
+      with:
+        path: scanner/snapshot
+        key: odc-data-13.0.0-${{ github.run_id }}-${{ github.run_attempt }}
     - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
     - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
       name: Package candidate snapshot
@@ -59,10 +73,18 @@ jobs:
         tags: odc-candidate:checked
         cache-from: type=gha,scope=owasp-snapshot
         cache-to: type=gha,mode=max,scope=owasp-snapshot
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@619dda506a188b21d5918a9e9e301713fb607b06 # tools-v1.0.0
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@610316be42779af70edbc6362fc4d73cb6025f93 # tools-v1.0.1
       name: Verify packaged snapshot and vulnerable fixture
       with:
         command: smoke
+    - name: Upload smoke report
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      if: ${{ always() }}
+      with:
+        name: owasp-smoke-report
+        path: reports/
+        retention-days: 3
+        if-no-files-found: warn
     - name: Publish successful snapshot
       run: |
         image="ghcr.io/disease-prediction-aset26/owasp-dependency-check"

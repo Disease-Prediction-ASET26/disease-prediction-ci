@@ -40,8 +40,7 @@ organization**.
    gh run list --repo Disease-Prediction-ASET26/disease-prediction-ci --workflow owasp-refresh.yml
    ```
 
-3. Wait for the update, vulnerable-fixture smoke test, packaged-image smoke
-   test, and publication to pass.
+3. Wait for the database update, packaged-image smoke test, and publication to pass.
 4. Open the private `owasp-dependency-check` GHCR package. Under **Manage
    Actions access**, grant each application repository **Read** access.
 5. Enable daily updates after the first successful snapshot:
@@ -58,6 +57,10 @@ and publishes only after smoke checks pass. It updates the stable channel after
 the unique version succeeds. A failed update preserves the previous published
 snapshot. Manual `bootstrap=true` starts a fresh database. Use it for first use
 or a reviewed database upgrade, not registry errors.
+
+The updater caches refreshed data before packaging and smoke checks. If a later
+step fails, retry with `bootstrap=false` to reuse that data. A cache miss restores
+the published compatible snapshot. Failed NVD updates never replace cached data.
 
 Consumers resolve the channel to a digest and record it in the summary. Each
 scan uses a separate writable database copy with `--noupdate`. Missing,
@@ -150,8 +153,8 @@ actionlint .github/workflows/*.yml
 
 The tests cover snapshot freshness, failed updates, secret exclusion,
 disabled-stage gates, scan-before-publish behavior, and preview cleanup. The
-live updater also proves that Dependency-Check rejects a Log4j 2.14.1 metadata
-fixture. That live test needs a populated NVD database. Unit tests do not
+live updater also proves that Dependency-Check rejects a checksum-verified Log4j
+2.14.1 JAR. That live test needs a populated NVD database. Unit tests do not
 replace it.
 
 Actions and reusable workflows use full commit SHAs. Dependabot proposes weekly

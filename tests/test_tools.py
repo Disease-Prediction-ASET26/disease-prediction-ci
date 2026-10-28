@@ -1,6 +1,8 @@
 import copy
 import datetime as dt
+import hashlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -315,6 +317,7 @@ class SnapshotTests(unittest.TestCase):
             return subprocess.CompletedProcess([], 1)
 
         with (
+            patch.object(scanner, "vulnerable_fixture"),
             patch.object(scanner, "scan", side_effect=fake_scan),
             self.assertRaises(ValueError),
         ):
@@ -349,7 +352,7 @@ class SnapshotTests(unittest.TestCase):
             if path.is_file():
                 self.assertNotIn(b"private-test-key", path.read_bytes())
 
-    def test_failed_smoke_keeps_prepared_snapshot_unpublished(self):
+    def test_bootstrap_prepares_cache_before_downstream_validation(self):
         destination = Path(self.directory.name) / "prepared"
 
         def update(*arguments, **kwargs):
@@ -359,11 +362,61 @@ class SnapshotTests(unittest.TestCase):
         with (
             patch.dict(os.environ, {"NVD_API_KEY": "private-test-key"}),
             patch.object(scanner, "run", side_effect=update),
-            patch.object(scanner, "smoke", side_effect=ValueError("gate failed")),
-            self.assertRaises(ValueError),
+            patch.object(scanner, "smoke") as smoke,
         ):
             scanner.update(destination, bootstrap=True)
-        self.assertFalse(destination.exists())
+        smoke.assert_not_called()
+        scanner.validate_snapshot(destination)
+
+    def test_cached_snapshot_avoids_registry_restore(self):
+        destination = Path(self.directory.name) / "prepared"
+        shutil.copytree(self.path, destination)
+        with (
+            patch.dict(os.environ, {"NVD_API_KEY": "private-test-key"}),
+            patch.object(scanner, "resolve_image") as resolve,
+            patch.object(scanner, "run"),
+        ):
+            scanner.update(destination)
+        resolve.assert_not_called()
+        scanner.validate_snapshot(destination)
+
+    def test_failed_refresh_preserves_cached_database(self):
+        destination = Path(self.directory.name) / "prepared"
+        shutil.copytree(self.path, destination)
+        with (
+            patch.dict(os.environ, {"NVD_API_KEY": "private-test-key"}),
+            patch.object(
+                scanner, "run", side_effect=subprocess.CalledProcessError(1, "update")
+            ),
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            scanner.update(destination)
+        self.assertEqual((destination / "data" / "odc.mv.db").read_bytes(), b"database")
+
+    def test_fixture_rejects_changed_download(self):
+        destination = Path(self.directory.name) / "fixture"
+        with (
+            patch.object(
+                scanner.urllib.request,
+                "urlopen",
+                return_value=io.BytesIO(b"wrong artifact"),
+            ),
+            self.assertRaises(ValueError),
+        ):
+            scanner.vulnerable_fixture(destination)
+        self.assertFalse((destination / "log4j-core-2.14.1.jar").exists())
+
+    def test_fixture_accepts_matching_checksum(self):
+        destination = Path(self.directory.name) / "fixture"
+        data = b"fixture bytes"
+        with (
+            patch.object(
+                scanner.urllib.request, "urlopen", return_value=io.BytesIO(data)
+            ),
+            patch.object(scanner, "FIXTURE_SHA512", hashlib.sha512(data).hexdigest()),
+        ):
+            scanner.vulnerable_fixture(destination)
+        self.assertEqual((destination / "log4j-core-2.14.1.jar").read_bytes(), data)
 
 
 class GateTests(unittest.TestCase):
