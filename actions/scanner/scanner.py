@@ -13,6 +13,7 @@ from pathlib import Path
 
 VERSION = "13.0.0"
 BASE = "owasp/dependency-check:13.0.0@sha256:0e8f69ad5b00d62000937f4e57189812343f6903d9c83ee712012d51542a020a"
+SEED = "owasp/dependency-check-action@sha256:d32b3ebdbcf8dc7748f2da9c705f304cb1cff64462ad3139921e444f29a2767c"
 CHANNEL = "ghcr.io/disease-prediction-aset26/owasp-dependency-check:dc-13.0.0"
 MAX_AGE = dt.timedelta(hours=48)
 FIXTURE_URL = "https://repo.maven.apache.org/maven2/org/apache/logging/log4j/log4j-core/2.14.1/log4j-core-2.14.1.jar"
@@ -59,6 +60,29 @@ def extract_snapshot(image, destination):
         run("docker", "cp", f"{container}:/opt/odc-snapshot/.", str(destination))
     finally:
         run("docker", "rm", "-v", container, stdout=subprocess.DEVNULL)
+
+
+def extract_seed(destination):
+    run("docker", "pull", SEED)
+    version = run(
+        "docker", "run", "--rm", SEED, "--version", capture_output=True
+    ).stdout
+    if version.strip() != f"dependency-check-docker version {VERSION}":
+        raise ValueError("Seed uses an incompatible Dependency-Check version")
+    container = run(
+        "docker", "create", "--entrypoint", "/bin/true", SEED, capture_output=True
+    ).stdout.strip()
+    try:
+        data = destination / "data"
+        data.mkdir()
+        run(
+            "docker", "cp", f"{container}:/usr/share/dependency-check/data/.", str(data)
+        )
+    finally:
+        run("docker", "rm", "-v", container, stdout=subprocess.DEVNULL)
+    database = data / "odc.mv.db"
+    if not database.is_file() or database.stat().st_size == 0:
+        raise ValueError("Seed has no populated H2 database")
 
 
 def resolve_image(channel):
@@ -144,9 +168,9 @@ def smoke(image, snapshot, scratch, *, reports=None):
         for v in dependency.get("vulnerabilities", [])
     ]
     scores = [v.get("cvssv3", {}).get("baseScore", 0) for v in findings]
-    if result.returncode != 14 or not any(float(score) >= 7 for score in scores):
+    if result.returncode != 15 or not any(float(score) >= 7 for score in scores):
         raise ValueError(
-            "Scanner must reject the Log4j fixture with exit code 14 and a CVSS >=7 finding"
+            "Scanner must reject the Log4j fixture with exit code 15 and a CVSS >=7 finding"
         )
     if report.get("scanInfo", {}).get("analysisExceptions"):
         raise ValueError("Scanner smoke test reported analysis errors")
@@ -161,7 +185,7 @@ def update(destination, *, bootstrap=False):
         snapshot = scratch / "snapshot"
         snapshot.mkdir()
         if bootstrap:
-            (snapshot / "data").mkdir()
+            extract_seed(snapshot)
         elif destination.exists():
             validate_snapshot(destination, fresh=False)
             shutil.copytree(destination, snapshot, dirs_exist_ok=True)

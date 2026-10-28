@@ -33,7 +33,8 @@ organization**.
    gh secret set NVD_API_KEY --repo Disease-Prediction-ASET26/disease-prediction-ci
    ```
 
-2. Create the first snapshot. This manual run performs a full database download.
+2. Create the first snapshot. The updater copies a pinned OWASP database and
+   refreshes it before publication.
 
    ```sh
    gh workflow run owasp-refresh.yml --repo Disease-Prediction-ASET26/disease-prediction-ci --ref main -f bootstrap=true
@@ -58,8 +59,8 @@ organization**.
 The updater runs at `03:17 UTC`. It restores `dc-13.0.0`, updates NVD records,
 and publishes only after smoke checks pass. It updates the stable channel after
 the unique version succeeds. A failed update preserves the previous published
-snapshot. Manual `bootstrap=true` starts a fresh database. Use it for first use
-or a reviewed database upgrade, not registry errors.
+snapshot. Manual `bootstrap=true` starts from the pinned OWASP database. Use it
+for first use or a reviewed database upgrade, not registry errors.
 
 The updater caches refreshed data before packaging and smoke checks. If a later
 step fails, retry with `bootstrap=false` to reuse that data. A cache miss restores
