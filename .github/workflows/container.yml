@@ -1,0 +1,89 @@
+name: Containerize and scan
+on:
+  workflow_call:
+    inputs:
+      build-artifact:
+        required: false
+        type: string
+        default: ''
+permissions:
+  contents: read
+  packages: write
+  pull-requests: read
+jobs:
+  containerize:
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && github.event.action != 'closed' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    concurrency:
+      group: registry-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Require an application Dockerfile
+      run: test -f Dockerfile
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      if: ${{ inputs.build-artifact != '' }}
+      with:
+        name: ${{ inputs.build-artifact }}
+        path: target
+    - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+    - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      name: containerize
+      with:
+        context: .
+        file: Dockerfile
+        load: true
+        push: false
+        platforms: linux/amd64
+        provenance: false
+        sbom: false
+        tags: app-candidate:checked
+        labels: |
+          org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}
+          ci.run=${{ github.run_id }}-${{ github.run_attempt }}
+          ci.pr=${{ github.event.pull_request.number || 0 }}
+        cache-from: type=gha,scope=application
+        cache-to: type=gha,mode=max,scope=application
+    - name: Record image identity before scan
+      id: identity
+      run: |
+        mkdir -p reports
+        image_id="$(docker image inspect app-candidate:checked --format '{{.Id}}')"
+        echo "id=$image_id" >> "$GITHUB_OUTPUT"
+    - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      name: scan
+      with:
+        version: v0.70.0
+        scan-type: image
+        image-ref: app-candidate:checked
+        scanners: vuln
+        format: json
+        output: reports/trivy.json
+        severity: HIGH,CRITICAL
+        ignore-unfixed: false
+        exit-code: '1'
+        cache: true
+    - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/registry@2b3b9c222281391672abba03404c1421bf687210 # tools-v1.0.0
+      name: Publish the scanned image and retain current preview
+      with:
+        command: publish
+      env:
+        GH_TOKEN: ${{ github.token }}
+        SCANNED_IMAGE_ID: ${{ steps.identity.outputs.id }}
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      if: ${{ always() }}
+      with:
+        name: container-scan-report
+        path: reports/
+        retention-days: 3
+        if-no-files-found: warn
