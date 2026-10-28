@@ -330,6 +330,26 @@ class SnapshotTests(unittest.TestCase):
         ):
             scanner.smoke("image", self.path, Path(self.directory.name))
 
+    def test_smoke_accepts_expected_vulnerability_exit(self):
+        def fake_scan(image, data, source, reports, **kwargs):
+            reports.mkdir()
+            (reports / "dependency-check-report.json").write_text(
+                json.dumps(
+                    {
+                        "dependencies": [
+                            {"vulnerabilities": [{"cvssv3": {"baseScore": 10}}]}
+                        ]
+                    }
+                )
+            )
+            return subprocess.CompletedProcess([], 15)
+
+        with (
+            patch.object(scanner, "vulnerable_fixture"),
+            patch.object(scanner, "scan", side_effect=fake_scan),
+        ):
+            scanner.smoke("image", self.path, Path(self.directory.name))
+
     def test_successful_refresh_restores_seed_without_packaging_secret(self):
         destination = Path(self.directory.name) / "prepared"
 
