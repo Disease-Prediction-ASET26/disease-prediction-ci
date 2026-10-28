@@ -28,4 +28,6 @@ also require a fresh snapshot and reviewed consumer pins.
 
 Bootstrap uses [actions/cache v6.1.0](https://github.com/actions/cache/releases/tag/v6.1.0) at `55cc8345863c7cc4c66a329aec7e433d2d1c52a9` (verified 2026-10-28).
 
+Bootstrap copies the database from [owasp/dependency-check-action](https://hub.docker.com/r/owasp/dependency-check-action) at `sha256:d32b3ebdbcf8dc7748f2da9c705f304cb1cff64462ad3139921e444f29a2767c`. The image uses Dependency-Check 13.0.0. Review the seed digest when upgrading the engine.
+
 The [Log4j fixture](https://repo.maven.apache.org/maven2/org/apache/logging/log4j/log4j-core/2.14.1/log4j-core-2.14.1.jar) uses SHA-512 `6e41ff42f12deedb8da06cbed73d0a9a5389660b7ee058436f8fcb6b14a6ab3105faf8e3f2c007d38ccc85af1e704505b84be5a80d8e68a434aae82b54b85f70`. The download matched Maven Central's published SHA-1 before this stronger digest was pinned.

@@ -300,6 +300,13 @@ class SnapshotTests(unittest.TestCase):
         with (
             patch.dict(os.environ, {"NVD_API_KEY": "test-key"}),
             patch.object(
+                scanner,
+                "extract_seed",
+                side_effect=lambda target: shutil.copytree(
+                    self.path / "data", target / "data"
+                ),
+            ),
+            patch.object(
                 scanner, "run", side_effect=subprocess.CalledProcessError(1, "update")
             ),
             self.assertRaises(subprocess.CalledProcessError),
@@ -361,12 +368,38 @@ class SnapshotTests(unittest.TestCase):
 
         with (
             patch.dict(os.environ, {"NVD_API_KEY": "private-test-key"}),
+            patch.object(
+                scanner,
+                "extract_seed",
+                side_effect=lambda target: shutil.copytree(
+                    self.path / "data", target / "data"
+                ),
+            ),
             patch.object(scanner, "run", side_effect=update),
             patch.object(scanner, "smoke") as smoke,
         ):
             scanner.update(destination, bootstrap=True)
         smoke.assert_not_called()
         scanner.validate_snapshot(destination)
+
+    def test_seed_rejects_incompatible_scanner_version(self):
+        target = Path(self.directory.name) / "seed"
+        target.mkdir()
+        with (
+            patch.object(
+                scanner,
+                "run",
+                side_effect=[
+                    None,
+                    subprocess.CompletedProcess(
+                        [], 0, "dependency-check-docker version 12.2.2"
+                    ),
+                ],
+            ),
+            self.assertRaisesRegex(ValueError, "incompatible"),
+        ):
+            scanner.extract_seed(target)
+        self.assertFalse((target / "data").exists())
 
     def test_cached_snapshot_avoids_registry_restore(self):
         destination = Path(self.directory.name) / "prepared"

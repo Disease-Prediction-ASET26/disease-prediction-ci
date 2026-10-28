@@ -1,0 +1,32 @@
+name: Test OWASP seed
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  seed:
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.head_ref == 'fix/owasp-seed' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Refresh seed
+      run: python3 actions/scanner/scanner.py update
+      env:
+        NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        SCANNER_BOOTSTRAP: 'true'
+    - name: Build snapshot
+      run: docker build -t odc-candidate:checked scanner
+    - name: Test vulnerability gate
+      run: python3 actions/scanner/scanner.py smoke
+    - name: Upload report
+      if: ${{ always() }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: seed-smoke-report
+        path: reports/
+        retention-days: 3
+        if-no-files-found: warn
