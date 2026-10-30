@@ -1,6 +1,6 @@
 # Tool versions
 
-Resolved from official release tags and registries on 2026-10-28.
+Resolved from official release tags and registries on 2026-10-30.
 
 | Tool                              | Version | Commit or digest                                                          | Source                                                                              |
 | --------------------------------- | ------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
@@ -13,6 +13,7 @@ Resolved from official release tags and registries on 2026-10-28.
 | docker/setup-buildx-action        | v4.4.1  | `f87e5991a6d7451dcb8d9637bfbc97413f497069`                                | [Release](https://github.com/docker/setup-buildx-action/releases/tag/v4.4.1)        |
 | docker/build-push-action          | v7.4.0  | `c3c9e263c25d99ce0380d002d59b67737d91b0dc`                                | [Release](https://github.com/docker/build-push-action/releases/tag/v7.4.0)          |
 | aquasecurity/trivy-action         | v0.36.0 | `ed142fd0673e97e23eac54620cfb913e5ce36c25`                                | [Release](https://github.com/aquasecurity/trivy-action/releases/tag/v0.36.0)        |
+| Gitleaks CLI                      | 8.30.1  | `linux_x64 archive sha256:551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb` | [Release and checksums](https://github.com/gitleaks/gitleaks/releases/tag/v8.30.1) |
 | SonarSource/sonarqube-scan-action | v8.4.0  | `4d1dc0c91ee400dcf8a6dddf2f705ac36542e304`                                | [Release](https://github.com/SonarSource/sonarqube-scan-action/releases/tag/v8.4.0) |
 | rhysd/actionlint                  | v1.7.12 | `8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8`        | [Release](https://github.com/rhysd/actionlint/releases/tag/v1.7.12)                 |
 | dependency-check/DependencyCheck  | v13.0.0 | `4aacdb10707fe88a55b873dd8f7235ad4ad3555f`                                | [Release](https://github.com/dependency-check/DependencyCheck/releases/tag/v13.0.0) |

@@ -6,15 +6,16 @@ backend, and frontend repositories. Each application keeps its own commands in
 
 ## Application pipelines
 
-The pipelines provide these stages: `lint`, `build`, `unit-test`,
-`integration-test`, `sonarqube`, `owasp`, `containerize`, and `scan`.
-Containerization and image scanning run in the same job.
+The pipelines provide these stages: `workflow-lint`, `secret-scan`, `lint`,
+`build`, `unit-test`, `integration-test`, `sonarqube`, `owasp`,
+`containerize`, and `scan`. Containerization and image scanning run in the same
+job.
 
 | Repository | Enabled checks                                                            | Not yet configured                                                   |
 | ---------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| AI         | Workflow lint, Ruff, Python compilation, Dependency-Check, pip-audit      | Unit tests, integration tests, service packaging, Dockerfile         |
-| Backend    | Workflow lint, Maven package, Spring context smoke test, Dependency-Check | Java lint, unit tests, Dockerfile                                    |
-| Frontend   | Workflow lint and readiness summary                                       | Runtime, dependency manager, application commands, tests, Dockerfile |
+| AI         | Workflow lint, Gitleaks, Ruff, Python compilation, Dependency-Check, pip-audit | Unit tests, integration tests, service packaging, Dockerfile         |
+| Backend    | Workflow lint, Gitleaks, Maven package, Spring context smoke test, Dependency-Check | Java lint, unit tests, Dockerfile                                    |
+| Frontend   | Workflow lint, Gitleaks, and readiness summary                             | Runtime, dependency manager, application commands, tests, Dockerfile |
 
 The AI build checks Python compilation only. The backend integration test runs
 the existing Spring context test. Disabled tests provide no coverage.
@@ -46,6 +47,15 @@ The shared updater refreshes the OWASP database every day at `03:17 UTC`. It
 publishes a private GHCR snapshot only after the smoke test passes. A failed
 update leaves the previous snapshot available. Each application scan uses its
 own copy. A missing or more-than-48-hour-old snapshot fails the scan.
+
+## Secret scanning
+
+Each application and GitOps pipeline calls the shared Gitleaks workflow on pull
+requests and pushes. It scans the commits introduced by that change, redacts
+detected values from logs, and fails the pipeline when it finds a secret. The
+scanner does not validate candidate credentials against provider APIs. GitHub
+secret scanning remains responsible for scanning repository history. The
+Gitleaks binary is pinned by version and SHA-256 checksum.
 
 To run a normal refresh manually, open **Actions > Refresh OWASP snapshot** in
 this repository. Select **Run workflow** on `main`. Leave `bootstrap` disabled
@@ -81,6 +91,7 @@ before reporting coverage.
 
 | Workflow                                                     | Purpose                                         |
 | ------------------------------------------------------------ | ----------------------------------------------- |
+| [secret-scan.yml](.github/workflows/secret-scan.yml)          | Find secrets in commits introduced by a change. |
 | [dependency-scan.yml](.github/workflows/dependency-scan.yml) | Scan Python and Maven dependencies.             |
 | [owasp-refresh.yml](.github/workflows/owasp-refresh.yml)     | Update and publish the OWASP database snapshot. |
 | [container.yml](.github/workflows/container.yml)             | Build, scan, and publish an application image.  |
