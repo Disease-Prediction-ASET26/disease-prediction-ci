@@ -14,15 +14,12 @@ Resolved from official release tags and registries on 2026-10-30.
 | docker/build-push-action          | v7.4.0  | `c3c9e263c25d99ce0380d002d59b67737d91b0dc`                                | [Release](https://github.com/docker/build-push-action/releases/tag/v7.4.0)          |
 | aquasecurity/trivy-action         | v0.36.0 | `ed142fd0673e97e23eac54620cfb913e5ce36c25`                                | [Release](https://github.com/aquasecurity/trivy-action/releases/tag/v0.36.0)        |
 | Gitleaks CLI                      | 8.30.1  | `linux_x64 archive sha256:551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb` | [Release and checksums](https://github.com/gitleaks/gitleaks/releases/tag/v8.30.1) |
-| SonarSource/sonarqube-scan-action | v8.4.0  | `4d1dc0c91ee400dcf8a6dddf2f705ac36542e304`                                | [Release](https://github.com/SonarSource/sonarqube-scan-action/releases/tag/v8.4.0) |
 | rhysd/actionlint                  | v1.7.12 | `8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8`        | [Release](https://github.com/rhysd/actionlint/releases/tag/v1.7.12)                 |
 | dependency-check/DependencyCheck  | v13.0.0 | `4aacdb10707fe88a55b873dd8f7235ad4ad3555f`                                | [Release](https://github.com/dependency-check/DependencyCheck/releases/tag/v13.0.0) |
 | ruff                              | 0.17.3  | `PyPI release`                                                            | [Release](https://pypi.org/project/ruff/0.17.3/)                                    |
 | pip-audit                         | 2.10.1  | `PyPI release`                                                            | [Release](https://pypi.org/project/pip-audit/2.10.1/)                               |
 | owasp/dependency-check            | 13.0.0  | `sha256:0e8f69ad5b00d62000937f4e57189812343f6903d9c83ee712012d51542a020a` | [Release](https://hub.docker.com/r/owasp/dependency-check/tags?name=13.0.0)         |
 
-The backend Sonar Maven scanner uses
-[5.8.0.7211](https://repo.maven.apache.org/maven2/org/sonarsource/scanner/maven/sonar-maven-plugin/5.8.0.7211/).
 The Trivy action explicitly selects CLI v0.70.0, its upstream default at the
 pinned action commit. Dependabot proposes weekly updates. Engine/schema upgrades
 also require a fresh snapshot and reviewed consumer pins.

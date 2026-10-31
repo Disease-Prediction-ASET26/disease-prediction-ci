@@ -7,9 +7,8 @@ backend, and frontend repositories. Each application keeps its own commands in
 ## Application pipelines
 
 The pipelines provide these stages: `workflow-lint`, `secret-scan`, `lint`,
-`build`, `unit-test`, `integration-test`, `sonarqube`, `owasp`,
-`containerize`, and `scan`. Containerization and image scanning run in the same
-job.
+`build`, `unit-test`, `integration-test`, `owasp`, `containerize`, and `scan`.
+Containerization and image scanning run in the same job.
 
 | Repository | Enabled checks                                                            | Not yet configured                                                   |
 | ---------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------- |
@@ -78,14 +77,6 @@ Use the image digest from the job summary to identify an exact image. Preview
 cleanup runs when an internal PR closes and each day at `03:47 UTC`. The preview
 package needs **Admin** access for its application repository to delete image
 versions. Production packages are not cleaned automatically.
-
-## SonarQube
-
-SonarQube is prepared but disabled. To enable it, set the repository variables
-`SONAR_ENABLED`, `SONAR_HOST_URL`, and `SONAR_PROJECT_KEY`. Set `SONAR_ENABLED`
-to `true`. Add `SONAR_TOKEN` as a repository secret. Analysis runs on `main` and
-waits for the quality gate. Application teams must add coverage generation
-before reporting coverage.
 
 ## Shared workflows
 
