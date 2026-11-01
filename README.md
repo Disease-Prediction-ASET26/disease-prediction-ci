@@ -40,7 +40,11 @@ scan workflow currently supports Python and Maven.
 
 Dependency-Check fails at CVSS 7 or higher. `pip-audit` fails on any advisory.
 Scanner errors fail the job. The credential-dependent OSS Index analyzer is
-disabled.
+disabled. A consumer may provide a root-level `owasp-suppression.xml` for
+documented false positives. The shared workflow forwards it beside the Python
+dependency list or Maven build artifact before scanning. Keep exceptions
+narrow by matching the affected package and vulnerability, and explain why each
+exception is safe.
 
 The shared updater refreshes the OWASP database every day at `03:17 UTC`. It
 publishes a private GHCR snapshot only after the smoke test passes. A failed

@@ -37,6 +37,12 @@ jobs:
       with:
         name: ${{ inputs.build-artifact }}
         path: target
+    - name: Forward Maven suppression file
+      if: ${{ inputs.ecosystem == 'maven' }}
+      run: |
+        if [ -f owasp-suppression.xml ]; then
+          cp owasp-suppression.xml target/owasp-suppression.xml
+        fi
     - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         # spaCy 3.7.x (via thinc/blis) ships no cp313 wheels, so pip would try
