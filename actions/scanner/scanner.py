@@ -141,6 +141,12 @@ def scan(image, data, source, reports, *, python=False, check=True):
     ]
     if python:
         args.append("--enableExperimental")
+    # Projects may ship an owasp-suppression.xml alongside the scan input to
+    # silence documented false positives (e.g. CPE name collisions). The input
+    # directory is mounted read-only at /input, so reference it there. Absence
+    # of the file leaves behaviour unchanged.
+    if (source / "owasp-suppression.xml").is_file():
+        args.extend(["--suppression", "/input/owasp-suppression.xml"])
     return subprocess.run(args, check=check, text=True)
 
 
