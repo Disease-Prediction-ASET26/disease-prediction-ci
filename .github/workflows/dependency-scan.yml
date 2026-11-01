@@ -39,7 +39,10 @@ jobs:
         path: target
     - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
-        python-version: '3.13'
+        # spaCy 3.7.x (via thinc/blis) ships no cp313 wheels, so pip would try
+        # to compile blis from source and fail. Pin to 3.12 to match the
+        # lint/build jobs, which have prebuilt wheels for this stack.
+        python-version: '3.12'
         cache: pip
         cache-dependency-path: requirements.txt
       if: ${{ inputs.ecosystem == 'python' }}
