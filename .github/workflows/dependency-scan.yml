@@ -55,6 +55,11 @@ jobs:
         mkdir -p "$RUNNER_TEMP/dependency-input"
         "$RUNNER_TEMP/application-venv/bin/python" -m pip freeze > "$RUNNER_TEMP/dependency-input/requirements.txt"
         test -s "$RUNNER_TEMP/dependency-input/requirements.txt"
+        # Forward a project-provided suppression file (documented false
+        # positives) into the scan input the OWASP scanner reads.
+        if [ -f owasp-suppression.xml ]; then
+          cp owasp-suppression.xml "$RUNNER_TEMP/dependency-input/owasp-suppression.xml"
+        fi
     - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
       with:
         registry: ghcr.io

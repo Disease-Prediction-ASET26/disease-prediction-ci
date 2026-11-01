@@ -281,6 +281,35 @@ class SnapshotTests(unittest.TestCase):
             self.assertIn(argument, arguments)
         self.assertEqual(arguments[arguments.index("--failOnCVSS") + 1], "7")
 
+    def test_scan_omits_suppression_when_file_absent(self):
+        with patch.object(scanner.subprocess, "run") as run:
+            scanner.scan(
+                "image@sha256:digest",
+                self.path / "data",
+                self.path,
+                self.path / "reports",
+                python=True,
+            )
+        arguments = run.call_args.args[0]
+        self.assertNotIn("--suppression", arguments)
+
+    def test_scan_adds_suppression_when_file_present(self):
+        (self.path / "owasp-suppression.xml").write_text("<suppressions/>")
+        with patch.object(scanner.subprocess, "run") as run:
+            scanner.scan(
+                "image@sha256:digest",
+                self.path / "data",
+                self.path,
+                self.path / "reports",
+                python=True,
+            )
+        arguments = run.call_args.args[0]
+        self.assertIn("--suppression", arguments)
+        self.assertEqual(
+            arguments[arguments.index("--suppression") + 1],
+            "/input/owasp-suppression.xml",
+        )
+
     def test_cold_bootstrap_requires_explicit_choice(self):
         destination = Path(self.directory.name) / "prepared"
         with (
