@@ -4,6 +4,10 @@ This repository contains the shared GitHub Actions workflows for the AI,
 backend, and frontend repositories. Each application keeps its own commands in
 `.github/workflows/ci.yml`.
 
+See the [cross-repository DevOps overview](https://github.com/Disease-Prediction-ASET26/disease-prediction-docs/blob/main/devops/README.md)
+for the system map. This repository remains the source for shared workflow
+behavior and pinned versions.
+
 ## Application pipelines
 
 The pipelines provide these stages: `workflow-lint`, `secret-scan`, `lint`,
