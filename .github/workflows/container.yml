@@ -96,7 +96,7 @@ jobs:
         image_id="$(docker image inspect app-candidate:checked --format '{{.Id}}')"
         echo "id=$image_id" >> "$GITHUB_OUTPUT"
     - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-      name: scan
+      name: Report all HIGH and CRITICAL findings
       with:
         version: v0.70.0
         scan-type: image
@@ -106,6 +106,17 @@ jobs:
         output: reports/trivy.json
         severity: HIGH,CRITICAL
         ignore-unfixed: false
+        exit-code: '0'
+        cache: true
+    - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      name: Block images with fixable HIGH or CRITICAL findings
+      with:
+        version: v0.70.0
+        scan-type: image
+        image-ref: app-candidate:checked
+        scanners: vuln
+        severity: HIGH,CRITICAL
+        ignore-unfixed: true
         exit-code: '1'
         cache: true
     - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0

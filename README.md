@@ -74,8 +74,9 @@ to reuse the existing snapshot.
 
 The shared workflow selects a dev or production Dockerfile from the target
 branch, builds for Linux ARM64, scans with Trivy, and publishes only after the
-application checks pass. Trivy fails on HIGH and CRITICAL findings, including
-unfixed findings.
+application checks pass. The full HIGH and CRITICAL report is retained as a
+workflow artifact. Publishing fails when a finding has an available fix;
+unfixed findings remain visible in the report for review.
 
 | Build | Private GHCR package | Tags |
 | ----- | -------------------- | ---- |
