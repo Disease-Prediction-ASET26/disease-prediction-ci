@@ -45,8 +45,9 @@ uses `npm audit` with a HIGH severity threshold. The shared scan workflow
 currently supports Python and Maven.
 
 Dependency-Check fails at CVSS 7 or higher. `pip-audit` fails on any advisory.
-Scanner errors fail the job. The credential-dependent OSS Index analyzer is
-disabled. A consumer may provide a root-level `owasp-suppression.xml` for
+Scanner errors fail the job. Maven scans use Sonatype's current Central Search
+Solr API endpoint. The credential-dependent OSS Index analyzer is disabled. A
+consumer may provide a root-level `owasp-suppression.xml` for
 documented false positives. The shared workflow forwards it beside the Python
 dependency list or Maven build artifact before scanning. Keep exceptions
 narrow by matching the affected package and vulnerability, and explain why each

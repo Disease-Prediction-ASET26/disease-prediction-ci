@@ -15,6 +15,7 @@ VERSION = "13.0.0"
 BASE = "owasp/dependency-check:13.0.0@sha256:0e8f69ad5b00d62000937f4e57189812343f6903d9c83ee712012d51542a020a"
 SEED = "owasp/dependency-check-action@sha256:d32b3ebdbcf8dc7748f2da9c705f304cb1cff64462ad3139921e444f29a2767c"
 CHANNEL = "ghcr.io/disease-prediction-aset26/owasp-dependency-check:dc-13.0.0"
+MAVEN_CENTRAL_SEARCH_URL = "https://central.sonatype.com/solrsearch/select"
 MAX_AGE = dt.timedelta(hours=48)
 FIXTURE_URL = "https://repo.maven.apache.org/maven2/org/apache/logging/log4j/log4j-core/2.14.1/log4j-core-2.14.1.jar"
 FIXTURE_SHA512 = "6e41ff42f12deedb8da06cbed73d0a9a5389660b7ee058436f8fcb6b14a6ab3105faf8e3f2c007d38ccc85af1e704505b84be5a80d8e68a434aae82b54b85f70"
@@ -141,6 +142,10 @@ def scan(image, data, source, reports, *, python=False, check=True):
     ]
     if python:
         args.append("--enableExperimental")
+    else:
+        # The legacy search.maven.org endpoint times out on hosted runners.
+        # Sonatype serves the same Solr API from central.sonatype.com.
+        args.extend(["--centralUrl", MAVEN_CENTRAL_SEARCH_URL])
     # Projects may ship an owasp-suppression.xml alongside the scan input to
     # silence documented false positives (e.g. CPE name collisions). The input
     # directory is mounted read-only at /input, so reference it there. Absence
