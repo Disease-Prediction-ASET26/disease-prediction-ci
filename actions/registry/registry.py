@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import urllib.error
 import urllib.request
 
@@ -124,7 +125,29 @@ def cleanup(api, *, only=None):
 
 
 def docker(*args):
-    return subprocess.check_output(["docker", *args], text=True).strip()
+    command = ["docker", *args]
+    if args and args[0] == "push":
+        return subprocess.check_output(
+            command, text=True, stderr=subprocess.STDOUT
+        ).strip()
+    return subprocess.check_output(command, text=True).strip()
+
+
+def push_image(reference):
+    for attempt in range(3):
+        try:
+            return docker("push", reference)
+        except subprocess.CalledProcessError as error:
+            output = error.output or ""
+            if "unknown blob" not in output.lower() or attempt == 2:
+                if output:
+                    print(output)
+                raise
+            delay = 2 ** (attempt + 1)
+            print(output)
+            print(f"GHCR returned unknown blob; retrying image push in {delay}s.")
+            time.sleep(delay)
+    raise RuntimeError("Image push retry loop exited unexpectedly")
 
 
 def verify_remote(manifest, scanned_id):
@@ -177,7 +200,7 @@ def publish(api, event):
     repository = f"ghcr.io/{api.owner.lower()}/{package.lower()}"
     reference = repository + ":" + tag
     docker("tag", "app-candidate:checked", reference)
-    print(docker("push", reference))
+    print(push_image(reference))
     digests = json.loads(
         docker("image", "inspect", reference, "--format", "{{json .RepoDigests}}")
     )
@@ -195,7 +218,7 @@ def publish(api, event):
     ):
         return
     docker("tag", "app-candidate:checked", repository + ":" + alias)
-    print(docker("push", repository + ":" + alias))
+    print(push_image(repository + ":" + alias))
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as handle:
             handle.write(

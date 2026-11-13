@@ -182,9 +182,12 @@ class PublicationTests(unittest.TestCase):
                 side_effect=[
                     "sha256:config",
                     "",
-                    subprocess.CalledProcessError(1, "push"),
+                    subprocess.CalledProcessError(1, "push", output="unknown blob"),
+                    subprocess.CalledProcessError(1, "push", output="unknown blob"),
+                    subprocess.CalledProcessError(1, "push", output="unknown blob"),
                 ],
             ),
+            patch.object(registry.time, "sleep"),
             patch.object(registry, "cleanup") as cleanup,
             self.assertRaises(subprocess.CalledProcessError),
         ):
@@ -194,8 +197,10 @@ class PublicationTests(unittest.TestCase):
     def test_alias_moves_only_after_remote_identity_passes(self):
         commands = []
         repository = "ghcr.io/disease-prediction-aset26/disease-prediction-ai-pr"
+        push_attempts = 0
 
         def docker(*args):
+            nonlocal push_attempts
             commands.append(args)
             if args[:2] == ("image", "inspect"):
                 return (
@@ -205,10 +210,16 @@ class PublicationTests(unittest.TestCase):
                 )
             if args[:2] == ("manifest", "inspect"):
                 return json.dumps({"config": {"digest": "sha256:config"}})
+            if args[0] == "push" and push_attempts == 0:
+                push_attempts += 1
+                raise subprocess.CalledProcessError(
+                    1, ["docker", *args], output="unknown blob"
+                )
             return ""
 
         with (
             patch.object(registry, "docker", side_effect=docker),
+            patch.object(registry.time, "sleep"),
             patch.object(registry, "cleanup") as cleanup,
         ):
             registry.publish(self.api, self.event)

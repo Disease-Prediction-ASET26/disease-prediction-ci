@@ -124,7 +124,7 @@ jobs:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ github.token }}
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/registry@786d80e569e55b730e951e41b7862f21e526d2c4 # registry publish for dev, main, and PR images
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/registry@9c72eae15aa86cf769d23c0da7faacdbd150c286 # registry publisher with transient GHCR push retries
       name: Publish the scanned image and retain current preview
       with:
         command: publish

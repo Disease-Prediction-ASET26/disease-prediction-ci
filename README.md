@@ -90,6 +90,8 @@ cleanup runs when an internal PR closes and each day at `03:47 UTC`. The dev
 package keeps a moving `develop` tag and unique run tags; the production package
 keeps a moving `main` tag and unique run tags. The preview package needs
 **Admin** access for its application repository to delete image versions.
+The publisher retries a push twice (three attempts total) when GHCR reports
+`unknown blob`.
 Production and dev packages are not cleaned automatically.
 
 The local, dev, and production Compose environments are documented in the
