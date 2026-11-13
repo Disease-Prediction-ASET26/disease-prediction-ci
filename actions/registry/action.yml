@@ -4,10 +4,15 @@ inputs:
   command:
     description: publish or cleanup
     required: true
+outputs:
+  digest:
+    description: Immutable digest reference of the published image.
+    value: ${{ steps.registry.outputs.digest }}
 runs:
   using: composite
   steps:
-    - shell: bash
+    - id: registry
+      shell: bash
       env:
         REGISTRY_COMMAND: ${{ inputs.command }}
         REGISTRY_SCRIPT: ${{ github.action_path }}/registry.py
