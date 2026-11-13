@@ -25,20 +25,28 @@ class WorkflowTests(unittest.TestCase):
                         condition,
                     )
 
-    def test_publish_uses_loaded_image_after_a_blocking_scan(self):
+    def test_publish_requires_fixable_vulnerability_scan_to_pass(self):
         steps = workflow("container.yml")["jobs"]["containerize"]["steps"]
         build = next(step for step in steps if step.get("name") == "containerize")
         scan = next(step for step in steps if step.get("name") == "scan")
+        gate = next(
+            step
+            for step in steps
+            if step.get("name") == "Block images with fixable HIGH or CRITICAL findings"
+        )
         publish = next(
             step for step in steps if step.get("with", {}).get("command") == "publish"
         )
         self.assertTrue(build["with"]["load"])
         self.assertFalse(build["with"]["push"])
-        self.assertEqual(scan["with"]["exit-code"], "1")
+        self.assertEqual(scan["with"]["exit-code"], "0")
         self.assertEqual(scan["with"]["severity"], "HIGH,CRITICAL")
         self.assertFalse(scan["with"]["ignore-unfixed"])
-        self.assertNotIn("continue-on-error", scan)
-        self.assertLess(steps.index(scan), steps.index(publish))
+        self.assertEqual(gate["with"]["exit-code"], "1")
+        self.assertEqual(gate["with"]["severity"], "HIGH,CRITICAL")
+        self.assertTrue(gate["with"]["ignore-unfixed"])
+        self.assertLess(steps.index(scan), steps.index(gate))
+        self.assertLess(steps.index(gate), steps.index(publish))
 
     def test_publication_and_cleanup_share_registry_lock(self):
         publisher = workflow("container.yml")["jobs"]["containerize"]["concurrency"]
