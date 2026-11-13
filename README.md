@@ -84,7 +84,7 @@ the shared workflow. After a successful push to `develop`, CI opens or updates a
 GitOps pull request with the published image digest. Merge that pull request to
 let Argo CD sync the new image. The workflow needs a GitHub App installed only
 on `disease-prediction-gitops`, with Contents and Pull requests write access;
-the calling repositories must provide `GITOPS_APP_ID` (the app Client ID) and
+the calling repositories must provide `GITOPS_CLIENT_ID` (the app Client ID) and
 `GITOPS_APP_PRIVATE_KEY` (the complete PEM key) as Actions secrets. CI does not push image changes
 directly to the GitOps `main` branch. The AI model-runtime release has a
 separate digest update because its deployable image is produced by the reviewed
