@@ -159,7 +159,8 @@ jobs:
 
   update-gitops:
     name: open Oracle dev image update
-    if: ${{ inputs.gitops-image-name != '' && github.event_name == 'push' && github.ref == 'refs/heads/develop' && needs.containerize.outputs.image-digest != '' }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && inputs.gitops-image-name != '' && github.event_name == 'push' && github.ref == 'refs/heads/develop' && needs.containerize.outputs.image-digest != '' }}
     needs:
       - containerize
     runs-on: ubuntu-24.04
@@ -191,6 +192,7 @@ jobs:
           ref: main
           token: ${{ steps.gitops-token.outputs.token }}
           path: gitops
+          persist-credentials: false
 
       - name: Pin the new dev digest
         env:
@@ -247,6 +249,7 @@ jobs:
           IMAGE_NAME: ${{ inputs.gitops-image-name }}
           IMAGE_REF: ${{ needs.containerize.outputs.image-digest }}
         run: |
+          gh auth setup-git
           branch="automation/update-${IMAGE_NAME}-dev"
           git -C gitops config user.name "github-actions[bot]"
           git -C gitops config user.email "github-actions[bot]@users.noreply.github.com"
