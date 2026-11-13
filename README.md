@@ -79,6 +79,17 @@ application checks pass. The full HIGH and CRITICAL report is retained as a
 workflow artifact. Publishing fails when a finding has an available fix;
 unfixed findings remain visible in the report for review.
 
+The backend and frontend pipelines pass their Oracle dev Deployment names to
+the shared workflow. After a successful push to `develop`, CI opens or updates a
+GitOps pull request with the published image digest. Merge that pull request to
+let Argo CD sync the new image. The workflow needs a GitHub App installed only
+on `disease-prediction-gitops`, with Contents and Pull requests write access;
+the calling repositories must provide `GITOPS_APP_ID` and
+`GITOPS_APP_PRIVATE_KEY` as Actions secrets. CI does not push image changes
+directly to the GitOps `main` branch. The AI model-runtime release has a
+separate digest update because its deployable image is produced by the reviewed
+model release workflow, not the normal AI base-image build.
+
 | Build | Private GHCR package | Tags |
 | ----- | -------------------- | ---- |
 | Internal PR | `ghcr.io/disease-prediction-aset26/<repo>-pr` | Unique run tag and `pr-<number>` |

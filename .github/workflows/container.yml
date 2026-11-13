@@ -14,6 +14,20 @@ on:
         required: false
         type: string
         default: Dockerfile.prod
+      gitops-image-name:
+        required: false
+        type: string
+        default: ''
+        description: Deployment name in the Oracle dev GitOps manifest (backend or frontend).
+    secrets:
+      GITOPS_APP_ID:
+        required: false
+      GITOPS_APP_PRIVATE_KEY:
+        required: false
+    outputs:
+      image-digest:
+        description: Immutable digest reference of the published image.
+        value: ${{ jobs.containerize.outputs.image-digest }}
 permissions:
   contents: read
   packages: write
@@ -24,6 +38,9 @@ jobs:
       && github.event.action != 'closed' }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 35
+    outputs:
+      image-digest: ${{ steps.publish.outputs.digest }}
+      channel: ${{ steps.target.outputs.channel }}
     concurrency:
       group: registry-${{ github.repository }}
       cancel-in-progress: false
@@ -126,6 +143,7 @@ jobs:
         password: ${{ github.token }}
     - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/registry@9c72eae15aa86cf769d23c0da7faacdbd150c286 # registry publisher with transient GHCR push retries
       name: Publish the scanned image and retain current preview
+      id: publish
       with:
         command: publish
       env:
@@ -138,3 +156,117 @@ jobs:
         path: reports/
         retention-days: 3
         if-no-files-found: warn
+
+  update-gitops:
+    name: open Oracle dev image update
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && inputs.gitops-image-name != '' && github.event_name == 'push' && github.ref == 'refs/heads/develop' && needs.containerize.outputs.image-digest != '' }}
+    needs:
+      - containerize
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Require GitOps app credentials
+        env:
+          APP_ID: ${{ secrets.GITOPS_APP_ID }}
+          PRIVATE_KEY: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$APP_ID" || -z "$PRIVATE_KEY" ]]; then
+            echo "::error::Set GITOPS_APP_ID and GITOPS_APP_PRIVATE_KEY before publishing dev images."
+            exit 1
+          fi
+
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: gitops-token
+        with:
+          app-id: ${{ secrets.GITOPS_APP_ID }}
+          private-key: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
+          owner: Disease-Prediction-ASET26
+          repositories: disease-prediction-gitops
+          permission-contents: write
+          permission-pull-requests: write
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Disease-Prediction-ASET26/disease-prediction-gitops
+          ref: main
+          token: ${{ steps.gitops-token.outputs.token }}
+          path: gitops
+          persist-credentials: false
+
+      - name: Pin the new dev digest
+        env:
+          IMAGE_NAME: ${{ inputs.gitops-image-name }}
+          IMAGE_REF: ${{ needs.containerize.outputs.image-digest }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          deployments = {
+              "backend": "disease-prediction-be-dev",
+              "frontend": "disease-prediction-fe-dev",
+          }
+          deployment = os.environ["IMAGE_NAME"]
+          package = deployments.get(deployment)
+          if package is None:
+              raise SystemExit("gitops-image-name must be backend or frontend")
+
+          image_ref = os.environ["IMAGE_REF"]
+          expected = rf"ghcr\.io/disease-prediction-aset26/{package}@sha256:[0-9a-f]{{64}}"
+          if not re.fullmatch(expected, image_ref):
+              raise SystemExit("Published digest does not match the expected dev package")
+
+          path = Path("gitops/clusters/oracle/disease-prediction/deployments.yaml")
+          text = path.read_text(encoding="utf-8")
+          sections = text.split("\n---\n")
+          matches = 0
+          for index, section in enumerate(sections):
+              if not re.search(r"(?m)^kind: Deployment$", section):
+                  continue
+              if not re.search(rf"(?m)^  name: {re.escape(deployment)}$", section):
+                  continue
+              lines = section.splitlines()
+              image_lines = [i for i, line in enumerate(lines) if re.match(r"^\s+image:\s", line)]
+              if len(image_lines) != 1:
+                  raise SystemExit(f"Expected one image in the {deployment} Deployment")
+              line_index = image_lines[0]
+              indent = re.match(r"^(\s+image:\s*)", lines[line_index]).group(1)
+              lines[line_index] = indent + image_ref
+              sections[index] = "\n".join(lines)
+              matches += 1
+
+          if matches != 1:
+              raise SystemExit(f"Expected one {deployment} Deployment, found {matches}")
+          path.write_text("\n---\n".join(sections), encoding="utf-8")
+          PY
+          git -C gitops diff --check
+
+      - name: Open or update the GitOps pull request
+        env:
+          GH_TOKEN: ${{ steps.gitops-token.outputs.token }}
+          IMAGE_NAME: ${{ inputs.gitops-image-name }}
+          IMAGE_REF: ${{ needs.containerize.outputs.image-digest }}
+        run: |
+          gh auth setup-git
+          branch="automation/update-${IMAGE_NAME}-dev"
+          git -C gitops config user.name "github-actions[bot]"
+          git -C gitops config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C gitops switch -c "$branch"
+          git -C gitops add clusters/oracle/disease-prediction/deployments.yaml
+          if git -C gitops diff --cached --quiet; then
+            echo "The Oracle dev manifest already uses this digest."
+            exit 0
+          fi
+          git -C gitops commit -m "Update ${IMAGE_NAME} dev image digest"
+          git -C gitops push --force origin "HEAD:refs/heads/$branch"
+
+          title="Update ${IMAGE_NAME} dev image digest"
+          body="CI published the immutable dev image ${IMAGE_REF}. Review and merge this pull request to let Argo CD sync the Oracle dev stack."
+          number="$(gh pr list --repo Disease-Prediction-ASET26/disease-prediction-gitops --head "$branch" --state open --json number --jq '.[0].number // empty')"
+          if [[ -n "$number" ]]; then
+            gh pr edit "$number" --repo Disease-Prediction-ASET26/disease-prediction-gitops --title "$title" --body "$body"
+          else
+            gh pr create --repo Disease-Prediction-ASET26/disease-prediction-gitops --base main --head "$branch" --title "$title" --body "$body"
+          fi
