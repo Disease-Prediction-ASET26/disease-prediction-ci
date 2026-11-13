@@ -158,17 +158,22 @@ def publish(api, event):
         tag = f"pr-{number}-{head}-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}"
         alias = f"pr-{number}"
     else:
-        if os.environ["GITHUB_REF"] != "refs/heads/main":
-            raise ValueError("Production publication requires main")
-        current = api.request(f"/repos/{api.repository}/git/ref/heads/main")["object"][
-            "sha"
-        ]
+        ref = os.environ["GITHUB_REF"]
+        branches = {
+            "refs/heads/develop": (api.repo + "-dev", "develop"),
+            "refs/heads/main": (api.repo, "main"),
+        }
+        if ref not in branches:
+            raise ValueError("Image publication requires the develop or main branch")
+        branch = ref.removeprefix("refs/heads/")
+        package, alias = branches[ref]
+        current = api.request(f"/repos/{api.repository}/git/ref/heads/{branch}")[
+            "object"
+        ]["sha"]
         if current != os.environ["GITHUB_SHA"]:
-            print("Main build superseded; skip publication")
+            print(f"{branch} build superseded; skip publication")
             return
-        package = api.repo
         tag = f"sha-{current}-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}"
-        alias = "main"
     repository = f"ghcr.io/{api.owner.lower()}/{package.lower()}"
     reference = repository + ":" + tag
     docker("tag", "app-candidate:checked", reference)
@@ -183,7 +188,9 @@ def publish(api, event):
         return
     if (
         not number
-        and api.request(f"/repos/{api.repository}/git/ref/heads/main")["object"]["sha"]
+        and api.request(f"/repos/{api.repository}/git/ref/heads/{branch}")["object"][
+            "sha"
+        ]
         != os.environ["GITHUB_SHA"]
     ):
         return

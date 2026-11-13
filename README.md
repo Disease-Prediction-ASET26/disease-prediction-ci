@@ -14,37 +14,40 @@ The pipelines provide these stages: `workflow-lint`, `secret-scan`, `lint`,
 `build`, `unit-test`, `integration-test`, `owasp`, `containerize`, and `scan`.
 Containerization and image scanning run in the same job.
 
-| Repository | Enabled checks                                                            | Not yet configured                                                   |
-| ---------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| AI         | Workflow lint, Gitleaks, Ruff, Python compilation, Dependency-Check, pip-audit | Unit tests, integration tests, service packaging, Dockerfile         |
-| Backend    | Workflow lint, Gitleaks, Maven package, Spring context smoke test, Dependency-Check | Java lint, unit tests, Dockerfile                                    |
-| Frontend   | Workflow lint, Gitleaks, and readiness summary                             | Runtime, dependency manager, application commands, tests, Dockerfile |
+| Repository | Enabled checks |
+| ---------- | -------------- |
+| AI | Workflow lint, Gitleaks, Ruff, Python compile check, pytest with coverage, Dependency-Check, pip-audit, container build and Trivy scan |
+| Backend | Workflow lint, Gitleaks, Spotless, Maven package and tests, Dependency-Check, container build and Trivy scan |
+| Frontend | Workflow lint, Gitleaks, ESLint, TypeScript/Vite build, Vitest unit and integration tests, npm audit, container build and Trivy scan |
 
-The AI build checks Python compilation only. The backend integration test runs
-the existing Spring context test. Disabled tests provide no coverage.
+Image builds use `Dockerfile.dev` for `develop` and pull requests targeting
+`develop`. They use `Dockerfile.prod` for `main` and pull requests targeting
+`main`. Builds run only after the configured checks pass.
 
 ## Use the pipelines
 
 1. Create a feature branch in the application repository.
-2. Open an internal pull request to `main`.
+2. Open an internal pull request to `develop`.
 3. Open the **Actions** tab or the pull request checks.
 4. Check the `ci` job summary for results and disabled stages.
-5. Merge the pull request after the required checks pass.
+5. Merge the pull request after the required checks pass. Promote `develop` to
+   `main` with a pull request when a production release is ready.
 
-The `ci` check fails if an enabled stage fails. Where available, reports are
-uploaded as workflow artifacts for three days. Workflows also run after a push
-to `main`. Fork pull request workflows are disabled.
+The `ci` check fails if a required stage fails. Reports are uploaded as workflow
+artifacts for three days. Workflows run after pushes to `develop` and `main`.
+Fork pull request workflows are disabled.
 
 ## Dependency scanning
 
 The AI and backend pipelines use OWASP Dependency-Check. The AI pipeline also
-uses `pip-audit` to check resolved Python dependencies. The frontend scan is
-disabled until the frontend stack and dependency files are available. The shared
-scan workflow currently supports Python and Maven.
+uses `pip-audit` to check resolved Python dependencies. The frontend pipeline
+uses `npm audit` with a HIGH severity threshold. The shared scan workflow
+currently supports Python and Maven.
 
 Dependency-Check fails at CVSS 7 or higher. `pip-audit` fails on any advisory.
-Scanner errors fail the job. The credential-dependent OSS Index analyzer is
-disabled. A consumer may provide a root-level `owasp-suppression.xml` for
+Scanner errors fail the job. Maven scans use Sonatype's current Central Search
+Solr API endpoint. The credential-dependent OSS Index analyzer is disabled. A
+consumer may provide a root-level `owasp-suppression.xml` for
 documented false positives. The shared workflow forwards it beside the Python
 dependency list or Maven build artifact before scanning. Keep exceptions
 narrow by matching the affected package and vulnerability, and explain why each
@@ -70,21 +73,27 @@ to reuse the existing snapshot.
 
 ## Container images
 
-Container stages are disabled until each application provides a `Dockerfile`.
-Add a `.dockerignore` file to exclude secrets and local files. After that, set
-`CONTAINER_ENABLED` to `true` in the application repository. The workflow builds
-one image, scans it with Trivy, and publishes it only if the required checks
-pass. Trivy fails on HIGH and CRITICAL findings, including unfixed findings.
+The shared workflow selects a dev or production Dockerfile from the target
+branch, builds for Linux ARM64, scans with Trivy, and publishes only after the
+application checks pass. The full HIGH and CRITICAL report is retained as a
+workflow artifact. Publishing fails when a finding has an available fix;
+unfixed findings remain visible in the report for review.
 
-| Build       | Private GHCR package                          | Tags                             |
-| ----------- | --------------------------------------------- | -------------------------------- |
+| Build | Private GHCR package | Tags |
+| ----- | -------------------- | ---- |
 | Internal PR | `ghcr.io/disease-prediction-aset26/<repo>-pr` | Unique run tag and `pr-<number>` |
-| Main        | `ghcr.io/disease-prediction-aset26/<repo>`    | Unique run tag and `main`        |
+| `develop` | `ghcr.io/disease-prediction-aset26/<repo>-dev` | Unique run tag and `develop` |
+| `main` | `ghcr.io/disease-prediction-aset26/<repo>` | Unique run tag and `main` |
 
 Use the image digest from the job summary to identify an exact image. Preview
-cleanup runs when an internal PR closes and each day at `03:47 UTC`. The preview
-package needs **Admin** access for its application repository to delete image
-versions. Production packages are not cleaned automatically.
+cleanup runs when an internal PR closes and each day at `03:47 UTC`. The dev
+package keeps a moving `develop` tag and unique run tags; the production package
+keeps a moving `main` tag and unique run tags. The preview package needs
+**Admin** access for its application repository to delete image versions.
+Production and dev packages are not cleaned automatically.
+
+The local, dev, and production Compose environments are documented in the
+[`disease-prediction-docker` repository](https://github.com/Disease-Prediction-ASET26/disease-prediction-docker).
 
 ## Shared workflows
 
@@ -93,7 +102,7 @@ versions. Production packages are not cleaned automatically.
 | [secret-scan.yml](.github/workflows/secret-scan.yml)          | Find secrets in commits introduced by a change. |
 | [dependency-scan.yml](.github/workflows/dependency-scan.yml) | Scan Python and Maven dependencies.             |
 | [owasp-refresh.yml](.github/workflows/owasp-refresh.yml)     | Update and publish the OWASP database snapshot. |
-| [container.yml](.github/workflows/container.yml)             | Build, scan, and publish an application image.  |
+| [container.yml](.github/workflows/container.yml)             | Select, build, scan, and publish a dev or production image. |
 | [preview-cleanup.yml](.github/workflows/preview-cleanup.yml) | Remove outdated PR preview images.              |
 | [validate.yml](.github/workflows/validate.yml)               | Check shared workflows and Python tools.        |
 

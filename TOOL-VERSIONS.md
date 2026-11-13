@@ -7,6 +7,7 @@ Resolved from official release tags and registries on 2026-10-30.
 | actions/checkout                  | v7.0.1  | `3d3c42e5aac5ba805825da76410c181273ba90b1`                                | [Release](https://github.com/actions/checkout/releases/tag/v7.0.1)                  |
 | actions/setup-python              | v7.1.0  | `6d4fd22b20465ccc0f7354476588e8df7c9ca0e0`                                | [Release](https://github.com/actions/setup-python/releases/tag/v7.1.0)              |
 | actions/setup-java                | v6.1.0  | `b843ebf9b913146b38da2eaa7aeddf76074ae1ad`                                | [Release](https://github.com/actions/setup-java/releases/tag/v6.1.0)                |
+| actions/setup-node                | v7.1.0  | `949feb2413d6458794dcd2491c4babbbce0c15c1`                                | [Release](https://github.com/actions/setup-node/releases/tag/v7.1.0)                |
 | actions/upload-artifact           | v7.0.2  | `cf430e030ddbb5b0abf93d22962f4752f3646cd9`                                | [Release](https://github.com/actions/upload-artifact/releases/tag/v7.0.2)           |
 | actions/download-artifact         | v8.0.2  | `9000827ccba6bdab643e8b6fd33ac0654aef8333`                                | [Release](https://github.com/actions/download-artifact/releases/tag/v8.0.2)         |
 | docker/login-action               | v4.7.0  | `81c6f93d4bc991e510b342a00b419b3bb4efc5c6`                                | [Release](https://github.com/docker/login-action/releases/tag/v4.7.0)               |
