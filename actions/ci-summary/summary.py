@@ -15,9 +15,7 @@ def evaluate(needs, disabled, enabled=()):
         elif result != "success":
             failed.append(name)
         lines.append(f"| {name} | {result} |")
-    lines.append(
-        "\nDisabled tests provide no coverage. Only configured stages contribute to this CI result."
-    )
+    lines.append("\nStages marked not configured are excluded from this CI result.")
     return failed, "\n".join(lines) + "\n"
 
 
