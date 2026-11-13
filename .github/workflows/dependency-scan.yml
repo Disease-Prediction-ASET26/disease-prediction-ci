@@ -71,7 +71,7 @@ jobs:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ github.token }}
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@98dab4ab6d937d89f49360fe77d5ddae79d9808e # Dependency-Check 13 with current Maven Central search
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@786d80e569e55b730e951e41b7862f21e526d2c4 # Dependency-Check 13 with current Maven Central search
       name: OWASP Dependency-Check
       with:
         command: scan
