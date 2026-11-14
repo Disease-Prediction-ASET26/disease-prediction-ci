@@ -59,11 +59,33 @@ class WorkflowTests(unittest.TestCase):
             )
         )
 
-    def test_publication_and_cleanup_share_registry_lock(self):
+    def test_preview_lock_is_separate_from_branch_release_locks(self):
         publisher = workflow("container.yml")["concurrency"]
         cleanup = workflow("preview-cleanup.yml")["jobs"]["cleanup"]["concurrency"]
-        self.assertEqual(publisher, cleanup)
+        self.assertEqual(
+            publisher["group"],
+            "registry-${{ github.repository }}${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' && '-prod' || github.ref == 'refs/heads/develop' && '-dev' || '-other') || '' }}",
+        )
+        self.assertEqual(cleanup["group"], "registry-${{ github.repository }}")
         self.assertFalse(publisher["cancel-in-progress"])
+        self.assertFalse(cleanup["cancel-in-progress"])
+        self.assertEqual(publisher["queue"], "max")
+        self.assertEqual(cleanup["queue"], "max")
+
+    def test_queue_settings_use_supported_values(self):
+        for path in (ROOT / ".github/workflows").glob("*.yml"):
+            document = yaml.safe_load(path.read_text())
+            groups = [document.get("concurrency", {})]
+            groups.extend(
+                job.get("concurrency", {}) for job in document["jobs"].values()
+            )
+            for group in groups:
+                if not isinstance(group, dict) or "queue" not in group:
+                    continue
+                with self.subTest(workflow=path.name, group=group):
+                    self.assertIn(group["queue"], {"single", "max"})
+                    if group["queue"] == "max":
+                        self.assertFalse(group.get("cancel-in-progress", False))
 
     def test_gitops_updates_only_after_branch_image_publication(self):
         job = workflow("container.yml")["jobs"]["update-gitops"]

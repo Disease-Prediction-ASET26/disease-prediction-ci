@@ -113,6 +113,10 @@ keeps a moving `main` tag and unique run tags. The preview package needs
 The publisher retries a push twice (three attempts total) when GHCR reports
 `unknown blob`.
 Production and dev packages are not cleaned automatically.
+Preview publication and cleanup share a lock. Dev and production releases use
+separate locks so preview activity cannot cancel or delay a release. Each lock
+queues up to 100 waiting runs. A release skips publication if its source branch
+has moved.
 
 The local, dev, and production Compose environments are documented in the
 [`disease-prediction-docker` repository](https://github.com/Disease-Prediction-ASET26/disease-prediction-docker).
@@ -140,5 +144,8 @@ Run these commands before opening a PR:
 ruff check --isolated actions tests
 ruff format --check --isolated actions tests
 python -m unittest discover -s tests -v
-actionlint .github/workflows/*.yml
+actionlint -ignore '^unexpected key "queue" for "concurrency" section\.' .github/workflows/*.yml
 ```
+
+The pinned actionlint version does not yet recognize GitHub's `concurrency.queue`
+setting. The ignore rule only skips that specific unsupported-key message.
