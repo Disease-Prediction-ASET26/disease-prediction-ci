@@ -89,7 +89,9 @@ updates a GitOps pull request with the published index digest for dev or prod,
 respectively. CI waits for GitOps validation and secret scanning, verifies the
 single image change, and merges the pull request so Argo CD can sync it. If
 checks fail or time out, the pull request stays open for review. CI refreshes
-the pull request and repeats the checks if the GitOps base branch changes. The
+the pull request and repeats the checks if the GitOps base branch changes. It
+also waits briefly if GitHub is still calculating mergeability and reports the
+GitHub error when merging fails. The
 workflow needs a GitHub App installed only
 on `disease-prediction-gitops`, with Contents and Pull requests write access;
 the calling repositories must provide `GITOPS_CLIENT_ID` (the app Client ID) and

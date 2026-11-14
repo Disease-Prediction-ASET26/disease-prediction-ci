@@ -1,5 +1,6 @@
 import copy
 import importlib.util
+import io
 import unittest
 import urllib.error
 from pathlib import Path
@@ -91,6 +92,7 @@ class FakeAPI:
     def __init__(self):
         self.requests = []
         self.current_pull = pull()
+        self.base = BASE
         self.source = SOURCE
         self.check_runs = successful_checks()
         self.run = workflow_run()
@@ -102,6 +104,8 @@ class FakeAPI:
         self.requests.append((path, method, body))
         if path.endswith("/commits/develop"):
             return {"sha": self.source}
+        if path.endswith("/git/ref/heads/main"):
+            return {"object": {"sha": self.base}}
         if "/compare/" in path:
             return {"behind_by": 0}
         if path.endswith("/check-runs?filter=latest&per_page=100"):
@@ -267,6 +271,7 @@ class MergeTests(unittest.TestCase):
                 side_effect=[None, {"parents": [{"sha": HEAD}, {"sha": BASE}]}],
             ) as request,
             patch.object(merge_gitops, "includes_base", return_value=True),
+            patch.object(merge_gitops, "main_head", return_value=BASE),
         ):
             self.assertEqual(
                 merge_gitops.updated_head(api, config(), HEAD, 10**20), new_head
@@ -303,6 +308,7 @@ class MergeTests(unittest.TestCase):
                 merge_attempts.append(body["sha"])
                 if len(merge_attempts) == 1:
                     api.current_pull["base"]["sha"] = new_base
+                    api.base = new_base
                     raise urllib.error.HTTPError(
                         path, status, "merge rejected", {}, None
                     )
@@ -325,7 +331,7 @@ class MergeTests(unittest.TestCase):
             merge_gitops.merge(api, config())
         self.assertEqual(merge_attempts, [HEAD, new_head])
 
-    def test_merge_error_without_base_change_is_not_retried(self):
+    def test_persistent_merge_error_is_reported_after_bounded_retries(self):
         api = FakeAPI()
         previous = api.request
 
@@ -337,7 +343,8 @@ class MergeTests(unittest.TestCase):
         with (
             patch.object(api, "request", side_effect=request),
             patch.object(merge_gitops, "verify_change"),
-            self.assertRaises(urllib.error.HTTPError),
+            patch.object(merge_gitops.time, "sleep"),
+            self.assertRaisesRegex(ValueError, "retries exhausted"),
         ):
             merge_gitops.merge(api, config())
 
@@ -358,6 +365,191 @@ class MergeTests(unittest.TestCase):
             self.assertRaisesRegex(ValueError, "changed"),
         ):
             merge_gitops.merge(api, config())
+
+    def test_transient_merge_rejection_rechecks_before_retry(self):
+        api = FakeAPI()
+        previous = api.request
+        attempts = []
+
+        def request(path, *, method="GET", body=None):
+            if path.endswith("/pulls/123/merge"):
+                attempts.append(body["sha"])
+                if len(attempts) == 1:
+                    raise urllib.error.HTTPError(
+                        path,
+                        405,
+                        "Method Not Allowed",
+                        {},
+                        io.BytesIO(b'{"message":"Mergeability is being calculated"}'),
+                    )
+            return previous(path, method=method, body=body)
+
+        with (
+            patch.object(api, "request", side_effect=request),
+            patch.object(merge_gitops, "verify_change"),
+            patch.object(merge_gitops, "checked", return_value=True) as checked,
+            patch.object(merge_gitops.time, "sleep"),
+        ):
+            merge_gitops.merge(api, config())
+        self.assertEqual(attempts, [HEAD, HEAD])
+        self.assertEqual(checked.call_count, 4)
+
+    def test_merge_rejection_rechecks_base_ancestry(self):
+        api = FakeAPI()
+        previous = api.request
+        new_head = "e" * 40
+        attempts = []
+
+        def request(path, *, method="GET", body=None):
+            if path.endswith("/pulls/123/merge"):
+                attempts.append(body["sha"])
+                if len(attempts) == 1:
+                    raise urllib.error.HTTPError(path, 405, "not mergeable", {}, None)
+            return previous(path, method=method, body=body)
+
+        def update(_api, _settings, head, _deadline):
+            api.current_pull["head"]["sha"] = new_head
+            return new_head
+
+        with (
+            patch.object(api, "request", side_effect=request),
+            patch.object(
+                merge_gitops, "includes_base", side_effect=[True, False, True]
+            ),
+            patch.object(merge_gitops, "updated_head", side_effect=update) as refresh,
+            patch.object(merge_gitops, "verify_change"),
+            patch.object(merge_gitops, "checked", return_value=True) as checked,
+            patch.object(merge_gitops.time, "sleep"),
+        ):
+            merge_gitops.merge(api, config())
+        self.assertEqual(attempts, [HEAD, new_head])
+        self.assertTrue(
+            any(call.args == (api, new_head) for call in checked.call_args_list)
+        )
+        refresh.assert_called_once()
+
+    def test_main_ref_change_waits_for_stale_pr_and_refreshes_head(self):
+        api = FakeAPI()
+        new_base = "f" * 40
+        new_head = "e" * 40
+        api.base = new_base
+        pull_calls = 0
+
+        def stale_pull(number):
+            nonlocal pull_calls
+            result = copy.deepcopy(api.current_pull)
+            pull_calls += 1
+            if pull_calls == 1:
+                api.current_pull["base"]["sha"] = new_base
+            return result
+
+        def update(_api, _settings, head, _deadline):
+            self.assertEqual(head, HEAD)
+            api.current_pull["head"]["sha"] = new_head
+            return new_head
+
+        with (
+            patch.object(api, "pull", side_effect=stale_pull),
+            patch.object(merge_gitops, "includes_base", side_effect=[False, True]),
+            patch.object(merge_gitops, "updated_head", side_effect=update) as refresh,
+            patch.object(merge_gitops, "verify_change"),
+            patch.object(merge_gitops, "checked", return_value=True),
+            patch.object(merge_gitops.time, "sleep") as sleep,
+        ):
+            merge_gitops.merge(api, config())
+        sleep.assert_called_once_with(5)
+        refresh.assert_called_once()
+        self.assertIn(
+            (
+                f"{merge_gitops.REPO_PATH}/pulls/123/merge",
+                "PUT",
+                {"sha": new_head, "merge_method": "squash"},
+            ),
+            api.requests,
+        )
+
+    def test_merge_405_recovers_when_pr_base_api_is_stale(self):
+        api = FakeAPI()
+        previous = api.request
+        new_base, new_head = "f" * 40, "e" * 40
+        attempts = []
+        stale_reads = 0
+
+        def request(path, *, method="GET", body=None):
+            if path.endswith("/pulls/123/merge"):
+                attempts.append(body["sha"])
+                if len(attempts) == 1:
+                    api.base = new_base
+                    raise urllib.error.HTTPError(path, 405, "not mergeable", {}, None)
+            return previous(path, method=method, body=body)
+
+        def stale_pull(number):
+            nonlocal stale_reads
+            result = copy.deepcopy(api.current_pull)
+            if api.base != api.current_pull["base"]["sha"]:
+                stale_reads += 1
+                if stale_reads == 2:
+                    api.current_pull["base"]["sha"] = new_base
+            return result
+
+        def update(_api, _settings, head, _deadline):
+            self.assertEqual(head, HEAD)
+            api.current_pull["head"]["sha"] = new_head
+            return new_head
+
+        with (
+            patch.object(api, "request", side_effect=request),
+            patch.object(api, "pull", side_effect=stale_pull),
+            patch.object(
+                merge_gitops, "includes_base", side_effect=[True, False, True]
+            ),
+            patch.object(merge_gitops, "updated_head", side_effect=update),
+            patch.object(merge_gitops, "verify_change"),
+            patch.object(merge_gitops, "checked", return_value=True),
+            patch.object(merge_gitops.time, "sleep"),
+        ):
+            merge_gitops.merge(api, config())
+        self.assertEqual(attempts, [HEAD, new_head])
+
+    def test_http_error_detail_includes_safe_message_and_request_id(self):
+        error = urllib.error.HTTPError(
+            "https://api.github.com/endpoint",
+            405,
+            "Method Not Allowed",
+            {"X-GitHub-Request-Id": "ABCD:1234"},
+            io.BytesIO(b'{"message":"Required check pending\\nRetry"}'),
+        )
+        self.assertEqual(
+            merge_gitops.http_error_detail(error),
+            "GitHub HTTP 405: Required check pending Retry (request ABCD:1234)",
+        )
+
+    def test_permission_error_is_reported_without_retry(self):
+        api = FakeAPI()
+        previous = api.request
+        attempts = []
+
+        def request(path, *, method="GET", body=None):
+            if path.endswith("/pulls/123/merge"):
+                attempts.append(body["sha"])
+                raise urllib.error.HTTPError(
+                    path,
+                    403,
+                    "Forbidden",
+                    {},
+                    io.BytesIO(b'{"message":"Resource not accessible by integration"}'),
+                )
+            return previous(path, method=method, body=body)
+
+        with (
+            patch.object(api, "request", side_effect=request),
+            patch.object(merge_gitops, "verify_change"),
+            patch.object(merge_gitops.time, "sleep") as sleep,
+            self.assertRaisesRegex(ValueError, "not accessible by integration"),
+        ):
+            merge_gitops.merge(api, config())
+        self.assertEqual(attempts, [HEAD])
+        sleep.assert_not_called()
 
 
 if __name__ == "__main__":

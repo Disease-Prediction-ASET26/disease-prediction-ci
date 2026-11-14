@@ -15,6 +15,28 @@ REPOSITORY = OWNER + "/disease-prediction-gitops"
 REPO_PATH = "/repos/" + REPOSITORY
 SHA = re.compile(r"[0-9a-f]{40}$")
 REQUIRED_CHECKS = {"validate", "secret-scan / secret-scan"}
+MERGE_RETRY_LIMIT = 4
+
+
+def http_error_detail(error):
+    try:
+        body = error.read(8192)
+    except (OSError, ValueError, AttributeError):
+        body = b""
+    finally:
+        error.close()
+    message = str(error.reason or "request rejected")
+    try:
+        payload = json.loads(body)
+        if isinstance(payload, dict) and isinstance(payload.get("message"), str):
+            message = payload["message"]
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        pass
+    message = re.sub(r"[^\x20-\x7e]", " ", message)[:400].replace("%", "%25")
+    request_id = (error.headers or {}).get("X-GitHub-Request-Id", "")
+    request_id = re.sub(r"[^A-Za-z0-9:-]", "", request_id)[:80]
+    detail = f"GitHub HTTP {error.code}: {message}"
+    return f"{detail} (request {request_id})" if request_id else detail
 
 
 def targets():
@@ -241,6 +263,14 @@ def includes_base(api, base, head):
     return result.get("behind_by") == 0
 
 
+def main_head(api):
+    result = api.request(f"{REPO_PATH}/git/ref/heads/main")
+    head = result.get("object", {}).get("sha", "")
+    if not SHA.fullmatch(head):
+        raise ValueError("Could not read the GitOps main branch head")
+    return head
+
+
 def updated_head(api, settings, old_head, deadline):
     api.request(
         f"{REPO_PATH}/pulls/{settings['number']}/update-branch",
@@ -260,7 +290,7 @@ def updated_head(api, settings, old_head, deadline):
                 len(parents) != 2
                 or parents[0] != old_head
                 or not SHA.fullmatch(parents[1] or "")
-                or not includes_base(api, parents[1], pull["base"]["sha"])
+                or not includes_base(api, parents[1], main_head(api))
             ):
                 raise ValueError("PR head changed outside the expected base update")
             print("Updated the PR branch; waiting for checks on its new head.")
@@ -273,13 +303,22 @@ def merge(api, settings):
     deadline = time.monotonic() + settings["timeout"]
     head = settings["head"]
     known_base = ""
+    merge_failures = 0
+    failure_target = None
     if not source_current(api, settings["source"]):
         print("Source branch moved; skip the superseded GitOps update.")
         return
     while time.monotonic() < deadline:
         pull = api.pull(settings["number"])
         verify_pull(pull, settings, head)
-        base = pull["base"]["sha"]
+        base = main_head(api)
+        if pull["base"]["sha"] != base:
+            print("Waiting for the GitOps PR to reflect the latest main branch.")
+            time.sleep(5)
+            continue
+        if failure_target != (head, base):
+            failure_target = (head, base)
+            merge_failures = 0
         if base != known_base:
             if not includes_base(api, base, head):
                 head = updated_head(api, settings, head, deadline)
@@ -292,14 +331,14 @@ def merge(api, settings):
             continue
         pull = api.pull(settings["number"])
         verify_pull(pull, settings, head)
-        if pull["base"]["sha"] != base:
+        if pull["base"]["sha"] != base or main_head(api) != base:
             continue
         verify_change(api, settings, pull, head)
         if not checked(api, head):
             continue
         pull = api.pull(settings["number"])
         verify_pull(pull, settings, head)
-        if pull["base"]["sha"] != base:
+        if pull["base"]["sha"] != base or main_head(api) != base:
             continue
         if not source_current(api, settings["source"]):
             print("Source branch moved; skip the superseded GitOps update.")
@@ -311,15 +350,29 @@ def merge(api, settings):
                 body={"sha": head, "merge_method": "squash"},
             )
         except urllib.error.HTTPError as error:
-            error.close()
-            if error.code not in (405, 409, 422):
-                raise
+            status = error.code
+            detail = http_error_detail(error)
+            if status not in (405, 409, 422):
+                raise ValueError(detail) from error
             latest = api.pull(settings["number"])
             verify_pull(latest, settings, head)
-            if latest["base"]["sha"] == base:
-                raise
-            print("GitOps main changed during merge; refresh the PR and check again.")
+            current_base = main_head(api)
+            if current_base != base or latest["base"]["sha"] != current_base:
+                print(
+                    "GitOps main changed during merge; refresh the PR and check again."
+                )
+                known_base = ""
+                continue
+            if latest.get("mergeable_state") == "dirty":
+                raise ValueError(
+                    f"{detail}; the GitOps PR has merge conflicts"
+                ) from error
+            merge_failures += 1
+            if merge_failures >= MERGE_RETRY_LIMIT:
+                raise ValueError(f"{detail}; merge retries exhausted") from error
+            print(f"{detail}; waiting before rechecking GitOps mergeability.")
             known_base = ""
+            time.sleep(5)
             continue
         if not result.get("merged"):
             raise ValueError("GitHub did not merge the GitOps PR")
@@ -331,6 +384,9 @@ def merge(api, settings):
 def main():
     try:
         merge(API(os.environ["GITOPS_TOKEN"]), settings(os.environ))
+    except urllib.error.HTTPError as error:
+        print(f"::error::{http_error_detail(error)}", file=sys.stderr)
+        raise SystemExit(1) from error
     except (KeyError, ValueError, TimeoutError, urllib.error.URLError) as error:
         print(f"::error::{error}", file=sys.stderr)
         raise SystemExit(1) from error
