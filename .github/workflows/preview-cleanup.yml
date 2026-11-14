@@ -15,7 +15,14 @@ jobs:
       group: registry-${{ github.repository }}
       cancel-in-progress: false
     steps:
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/registry@619dda506a188b21d5918a9e9e301713fb607b06 # tools-v1.0.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        # JSON lookup supports these newer job context fields in actionlint 1.7.12.
+        repository: ${{ fromJSON(toJSON(job)).workflow_repository }}
+        ref: ${{ fromJSON(toJSON(job)).workflow_sha }}
+        path: shared-ci
+        persist-credentials: false
+    - uses: ./shared-ci/actions/registry
       with:
         command: cleanup
       env:

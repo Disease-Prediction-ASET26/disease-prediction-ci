@@ -1,8 +1,8 @@
 name: Publish or clean application images
-description: Publish an already scanned image or clean preview versions only.
+description: Publish scanned images or clean preview versions only.
 inputs:
   command:
-    description: publish or cleanup
+    description: publish, stage, index, or cleanup
     required: true
 outputs:
   digest:

@@ -35,7 +35,7 @@ class WorkflowTests(unittest.TestCase):
             if step.get("name") == "Block images with fixable HIGH or CRITICAL findings"
         )
         publish = next(
-            step for step in steps if step.get("with", {}).get("command") == "publish"
+            step for step in steps if step.get("with", {}).get("command") == "stage"
         )
         self.assertTrue(build["with"]["load"])
         self.assertFalse(build["with"]["push"])
@@ -47,12 +47,30 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(gate["with"]["ignore-unfixed"])
         self.assertLess(steps.index(scan), steps.index(gate))
         self.assertLess(steps.index(gate), steps.index(publish))
+        job = workflow("container.yml")["jobs"]["containerize"]
+        platforms = {item["arch"] for item in job["strategy"]["matrix"]["include"]}
+        self.assertEqual(platforms, {"amd64", "arm64"})
+        index = workflow("container.yml")["jobs"]["publish"]
+        self.assertEqual(index["needs"], "containerize")
+        self.assertTrue(
+            any(
+                step.get("with", {}).get("command") == "index"
+                for step in index["steps"]
+            )
+        )
 
     def test_publication_and_cleanup_share_registry_lock(self):
-        publisher = workflow("container.yml")["jobs"]["containerize"]["concurrency"]
+        publisher = workflow("container.yml")["concurrency"]
         cleanup = workflow("preview-cleanup.yml")["jobs"]["cleanup"]["concurrency"]
         self.assertEqual(publisher, cleanup)
         self.assertFalse(publisher["cancel-in-progress"])
+
+    def test_gitops_updates_only_after_branch_image_publication(self):
+        job = workflow("container.yml")["jobs"]["update-gitops"]
+        self.assertIn("github.event_name == 'push'", job["if"])
+        self.assertIn("refs/heads/develop", job["if"])
+        self.assertIn("refs/heads/main", job["if"])
+        self.assertEqual(job["needs"], ["publish"])
 
     def test_refresh_is_serialized_and_publishes_after_packaged_smoke(self):
         document = workflow("owasp-refresh.yml")
