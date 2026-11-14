@@ -72,6 +72,17 @@ class PreviewTests(unittest.TestCase):
         items = [self.old, self.current, self.other_pr, self.production]
         self.assertEqual(registry.deletions(items, pull(), REPOSITORY), [10])
 
+    def test_keep_the_current_preview_platforms(self):
+        old_arch = version(15, f"pr-1-{OTHER_SHA}-10-1-amd64")
+        amd64 = version(16, f"pr-1-{SHA}-11-1-amd64")
+        arm64 = version(17, f"pr-1-{SHA}-11-1-arm64")
+        items = [self.old, self.current, old_arch, amd64, arm64]
+        self.assertEqual(registry.deletions(items, pull(), REPOSITORY), [10, 15])
+        self.assertEqual(
+            registry.deletions(items, pull(state="closed"), REPOSITORY),
+            [10, 11, 15, 16, 17],
+        )
+
     def test_closed_pr_removes_only_its_versions(self):
         items = [self.old, self.current, self.other_pr, self.production]
         self.assertEqual(
@@ -170,6 +181,11 @@ class PublicationTests(unittest.TestCase):
 
     def test_registry_manifest_must_match_scanned_config(self):
         registry.verify_remote({"config": {"digest": "sha256:config"}}, "sha256:config")
+        registry.verify_remote(
+            {"config": {"digest": "sha256:config"}},
+            "sha256:manifest",
+            "sha256:manifest",
+        )
         for manifest in [{}, {"config": {"digest": "sha256:other"}}, {"manifests": []}]:
             with self.assertRaises(ValueError):
                 registry.verify_remote(manifest, "sha256:config")
@@ -231,6 +247,104 @@ class PublicationTests(unittest.TestCase):
         alias_index = commands.index(("push", repository + ":pr-1"))
         self.assertLess(manifest_index, alias_index)
         cleanup.assert_called_once_with(self.api, only=1)
+
+
+class MultiPlatformTests(unittest.TestCase):
+    def setUp(self):
+        self.repository = "ghcr.io/disease-prediction-aset26/disease-prediction-ai-pr"
+        self.digests = {
+            "amd64": self.repository + "@sha256:" + "a" * 64,
+            "arm64": self.repository + "@sha256:" + "b" * 64,
+        }
+        self.manifest = {
+            "manifests": [
+                {
+                    "digest": reference.rsplit("@", 1)[1],
+                    "platform": {"os": "linux", "architecture": architecture},
+                }
+                for architecture, reference in self.digests.items()
+            ]
+        }
+
+    def test_index_contains_exact_scanned_architectures(self):
+        registry.verify_index(self.manifest, self.digests)
+        for change in (
+            {"manifests": self.manifest["manifests"][:1]},
+            {"manifests": self.manifest["manifests"] * 2},
+            {"manifests": self.manifest["manifests"][:1] * 2},
+        ):
+            with self.assertRaises(ValueError):
+                registry.verify_index(change, self.digests)
+        swapped = copy.deepcopy(self.manifest)
+        swapped["manifests"][0]["digest"] = swapped["manifests"][1]["digest"]
+        with self.assertRaises(ValueError):
+            registry.verify_index(swapped, self.digests)
+
+    def test_stage_rejects_wrong_architecture_before_push(self):
+        api = FakeGitHub()
+        event = {"number": 1, "pull_request": pull()}
+        config_id = "sha256:" + "c" * 64
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(
+                os.environ,
+                {
+                    "SCANNED_IMAGE_ID": config_id,
+                    "GITHUB_RUN_ID": "50",
+                    "GITHUB_RUN_ATTEMPT": "1",
+                    "IMAGE_ARCH": "amd64",
+                    "STAGE_OUTPUT": str(Path(directory) / "stage.json"),
+                },
+            ),
+            patch.object(
+                registry, "docker", side_effect=[config_id, "linux/arm64"]
+            ) as docker,
+            self.assertRaisesRegex(ValueError, "platform"),
+        ):
+            registry.stage(api, event)
+        self.assertEqual(docker.call_count, 2)
+
+    def test_index_rejects_unscanned_platform_before_publish(self):
+        api = FakeGitHub()
+        event = {"number": 1, "pull_request": pull()}
+        with tempfile.TemporaryDirectory() as directory:
+            for arch, reference in self.digests.items():
+                (Path(directory) / f"stage-{arch}.json").write_text(
+                    json.dumps(
+                        {
+                            "architecture": arch,
+                            "tag": f"pr-1-{SHA}-50-1-{arch}",
+                            "digest": reference,
+                            "scanned_id": "sha256:" + "c" * 64,
+                        }
+                    )
+                )
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "STAGE_DIR": directory,
+                        "GITHUB_RUN_ID": "50",
+                        "GITHUB_RUN_ATTEMPT": "1",
+                    },
+                ),
+                patch.object(
+                    registry,
+                    "remote_digest",
+                    side_effect=lambda reference: self.digests[
+                        reference.rsplit("-", 1)[1]
+                    ].rsplit("@", 1)[1],
+                ),
+                patch.object(
+                    registry,
+                    "remote_manifest",
+                    return_value={"config": {"digest": "sha256:" + "d" * 64}},
+                ),
+                patch.object(registry, "docker") as docker,
+                self.assertRaisesRegex(ValueError, "differs"),
+            ):
+                registry.index(api, event)
+            docker.assert_not_called()
 
 
 class SnapshotTests(unittest.TestCase):

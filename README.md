@@ -12,7 +12,7 @@ behavior and pinned versions.
 
 The pipelines provide these stages: `workflow-lint`, `secret-scan`, `lint`,
 `build`, `unit-test`, `integration-test`, `owasp`, `containerize`, and `scan`.
-Containerization and image scanning run in the same job.
+Each container architecture is built and scanned on its own native runner.
 
 | Repository | Enabled checks |
 | ---------- | -------------- |
@@ -74,15 +74,20 @@ to reuse the existing snapshot.
 ## Container images
 
 The shared workflow selects a dev or production Dockerfile from the target
-branch, builds for Linux ARM64, scans with Trivy, and publishes only after the
-application checks pass. The full HIGH and CRITICAL report is retained as a
-workflow artifact. Publishing fails when a finding has an available fix;
-unfixed findings remain visible in the report for review.
+branch. It builds and scans Linux AMD64 and ARM64 images on native runners.
+Each image must pass Trivy before CI publishes it. CI checks both image digests
+and combines them into one multi-platform image index. The index is published
+only when both architecture jobs pass. The full HIGH and CRITICAL reports are
+retained as workflow artifacts. Publishing fails when a finding has an
+available fix; unfixed findings remain visible in the reports for review.
+If a platform build fails, rerun all jobs so both platform images come from
+the same workflow attempt.
 
-The backend and frontend pipelines pass their Oracle dev Deployment names to
-the shared workflow. After a successful push to `develop`, CI opens or updates a
-GitOps pull request with the published image digest. Merge that pull request to
-let Argo CD sync the new image. The workflow needs a GitHub App installed only
+The backend and frontend pipelines pass their Oracle Deployment names to the
+shared workflow. After a successful push to `develop` or `main`, CI opens or
+updates a GitOps pull request with the published index digest for dev or prod,
+respectively. Merge that pull request to let Argo CD sync the new image. The
+workflow needs a GitHub App installed only
 on `disease-prediction-gitops`, with Contents and Pull requests write access;
 the calling repositories must provide `GITOPS_CLIENT_ID` (the app Client ID) and
 `GITOPS_APP_PRIVATE_KEY` (the complete PEM key) as Actions secrets. CI does not push image changes
@@ -92,12 +97,13 @@ model release workflow, not the normal AI base-image build.
 
 | Build | Private GHCR package | Tags |
 | ----- | -------------------- | ---- |
-| Internal PR | `ghcr.io/disease-prediction-aset26/<repo>-pr` | Unique run tag and `pr-<number>` |
-| `develop` | `ghcr.io/disease-prediction-aset26/<repo>-dev` | Unique run tag and `develop` |
-| `main` | `ghcr.io/disease-prediction-aset26/<repo>` | Unique run tag and `main` |
+| Internal PR | `ghcr.io/disease-prediction-aset26/<repo>-pr` | Unique run tags for the index and each architecture, and `pr-<number>` |
+| `develop` | `ghcr.io/disease-prediction-aset26/<repo>-dev` | Unique run tags for the index and each architecture, and `develop` |
+| `main` | `ghcr.io/disease-prediction-aset26/<repo>` | Unique run tags for the index and each architecture, and `main` |
 
 Use the image digest from the job summary to identify an exact image. Preview
-cleanup runs when an internal PR closes and each day at `03:47 UTC`. The dev
+cleanup runs when an internal PR closes and each day at `03:47 UTC`. It keeps
+the current index and both platform images together. The dev
 package keeps a moving `develop` tag and unique run tags; the production package
 keeps a moving `main` tag and unique run tags. The preview package needs
 **Admin** access for its application repository to delete image versions.

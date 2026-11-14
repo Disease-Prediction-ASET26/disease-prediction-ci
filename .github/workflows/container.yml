@@ -18,7 +18,7 @@ on:
         required: false
         type: string
         default: ''
-        description: Deployment name in the Oracle dev GitOps manifest (backend or frontend).
+        description: Deployment name in the Oracle GitOps manifests (backend or frontend).
     secrets:
       GITOPS_CLIENT_ID:
         required: false
@@ -27,23 +27,28 @@ on:
     outputs:
       image-digest:
         description: Immutable digest reference of the published image.
-        value: ${{ jobs.containerize.outputs.image-digest }}
+        value: ${{ jobs.publish.outputs.image-digest }}
 permissions:
   contents: read
   packages: write
   pull-requests: read
+concurrency:
+  group: registry-${{ github.repository }}
+  cancel-in-progress: false
 jobs:
   containerize:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
       && github.event.action != 'closed' }}
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 35
-    outputs:
-      image-digest: ${{ steps.publish.outputs.digest }}
-      channel: ${{ steps.target.outputs.channel }}
-    concurrency:
-      group: registry-${{ github.repository }}
-      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: amd64
+          runner: ubuntu-24.04
+        - arch: arm64
+          runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 55
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
@@ -94,7 +99,7 @@ jobs:
         file: ${{ steps.target.outputs.dockerfile }}
         load: true
         push: false
-        platforms: linux/arm64
+        platforms: linux/${{ matrix.arch }}
         provenance: false
         sbom: false
         tags: app-candidate:checked
@@ -104,8 +109,8 @@ jobs:
           ci.run=${{ github.run_id }}-${{ github.run_attempt }}
           ci.pr=${{ github.event.pull_request.number || 0 }}
           org.opencontainers.image.ref.name=${{ github.ref_name }}
-        cache-from: type=gha,scope=application
-        cache-to: type=gha,mode=max,scope=application
+        cache-from: type=gha,scope=application-${{ matrix.arch }}
+        cache-to: type=gha,mode=max,scope=application-${{ matrix.arch }}
     - name: Record image identity before scan
       id: identity
       run: |
@@ -141,28 +146,80 @@ jobs:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ github.token }}
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/registry@ef64928af0e4c0998741586d441c4871c2dbe12b # expose published digest output
-      name: Publish the scanned image and retain current preview
-      id: publish
+    - name: Check out the shared publisher
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
-        command: publish
+        # JSON lookup supports these newer job context fields in actionlint 1.7.12.
+        repository: ${{ fromJSON(toJSON(job)).workflow_repository }}
+        ref: ${{ fromJSON(toJSON(job)).workflow_sha }}
+        path: shared-ci
+        persist-credentials: false
+    - uses: ./shared-ci/actions/registry
+      name: Stage the scanned platform image
+      with:
+        command: stage
       env:
         GH_TOKEN: ${{ github.token }}
         SCANNED_IMAGE_ID: ${{ steps.identity.outputs.id }}
+        IMAGE_ARCH: ${{ matrix.arch }}
+        STAGE_OUTPUT: stage-${{ matrix.arch }}.json
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: image-stage-${{ matrix.arch }}
+        path: stage-${{ matrix.arch }}.json
+        retention-days: 3
+        if-no-files-found: error
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       if: ${{ always() }}
       with:
-        name: container-scan-report
+        name: container-scan-report-${{ matrix.arch }}
         path: reports/
         retention-days: 3
         if-no-files-found: warn
 
-  update-gitops:
-    name: open Oracle dev image update
+  publish:
+    name: Publish the scanned multi-platform index
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && inputs.gitops-image-name != '' && github.event_name == 'push' && github.ref == 'refs/heads/develop' && needs.containerize.outputs.image-digest != '' }}
+      && github.event.action != 'closed' }}
+    needs: containerize
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      image-digest: ${{ steps.publish.outputs.digest }}
+    steps:
+    - name: Check out the shared publisher
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: ${{ fromJSON(toJSON(job)).workflow_repository }}
+        ref: ${{ fromJSON(toJSON(job)).workflow_sha }}
+        path: shared-ci
+        persist-credentials: false
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        pattern: image-stage-*
+        path: image-stages
+        merge-multiple: true
+    - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+    - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+    - uses: ./shared-ci/actions/registry
+      name: Publish both scanned architectures
+      id: publish
+      with:
+        command: index
+      env:
+        GH_TOKEN: ${{ github.token }}
+        STAGE_DIR: image-stages
+
+  update-gitops:
+    name: open Oracle image update
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && inputs.gitops-image-name != '' && github.event_name == 'push' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main') && needs.publish.outputs.image-digest != '' }}
     needs:
-      - containerize
+      - publish
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -172,7 +229,7 @@ jobs:
           PRIVATE_KEY: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
         run: |
           if [[ -z "$APP_ID" || -z "$PRIVATE_KEY" ]]; then
-            echo "::error::Set GITOPS_CLIENT_ID and GITOPS_APP_PRIVATE_KEY before publishing dev images."
+            echo "::error::Set GITOPS_CLIENT_ID and GITOPS_APP_PRIVATE_KEY before publishing images."
             exit 1
           fi
 
@@ -194,10 +251,11 @@ jobs:
           path: gitops
           persist-credentials: false
 
-      - name: Pin the new dev digest
+      - name: Pin the new digest
         env:
           IMAGE_NAME: ${{ inputs.gitops-image-name }}
-          IMAGE_REF: ${{ needs.containerize.outputs.image-digest }}
+          IMAGE_REF: ${{ needs.publish.outputs.image-digest }}
+          TARGET_ENV: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
         run: |
           python3 - <<'PY'
           import os
@@ -205,20 +263,25 @@ jobs:
           from pathlib import Path
 
           deployments = {
-              "backend": "disease-prediction-be-dev",
-              "frontend": "disease-prediction-fe-dev",
+              "backend": "disease-prediction-be",
+              "frontend": "disease-prediction-fe",
           }
           deployment = os.environ["IMAGE_NAME"]
           package = deployments.get(deployment)
           if package is None:
               raise SystemExit("gitops-image-name must be backend or frontend")
 
+          environment = os.environ["TARGET_ENV"]
+          if environment not in {"dev", "prod"}:
+              raise SystemExit("Unknown target environment")
+          package += "-dev" if environment == "dev" else ""
           image_ref = os.environ["IMAGE_REF"]
           expected = rf"ghcr\.io/disease-prediction-aset26/{package}@sha256:[0-9a-f]{{64}}"
           if not re.fullmatch(expected, image_ref):
-              raise SystemExit("Published digest does not match the expected dev package")
+              raise SystemExit("Published digest does not match the expected package")
 
-          path = Path("gitops/clusters/oracle/disease-prediction/deployments.yaml")
+          directory = "disease-prediction" if environment == "dev" else "disease-prediction-prod"
+          path = Path("gitops/clusters/oracle") / directory / "deployments.yaml"
           text = path.read_text(encoding="utf-8")
           sections = text.split("\n---\n")
           matches = 0
@@ -247,23 +310,29 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.gitops-token.outputs.token }}
           IMAGE_NAME: ${{ inputs.gitops-image-name }}
-          IMAGE_REF: ${{ needs.containerize.outputs.image-digest }}
+          IMAGE_REF: ${{ needs.publish.outputs.image-digest }}
+          TARGET_ENV: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
         run: |
           gh auth setup-git
-          branch="automation/update-${IMAGE_NAME}-dev"
+          branch="automation/update-${IMAGE_NAME}-${TARGET_ENV}"
+          if [[ "$TARGET_ENV" == "dev" ]]; then
+            manifest="clusters/oracle/disease-prediction/deployments.yaml"
+          else
+            manifest="clusters/oracle/disease-prediction-prod/deployments.yaml"
+          fi
           git -C gitops config user.name "github-actions[bot]"
           git -C gitops config user.email "github-actions[bot]@users.noreply.github.com"
           git -C gitops switch -c "$branch"
-          git -C gitops add clusters/oracle/disease-prediction/deployments.yaml
+          git -C gitops add "$manifest"
           if git -C gitops diff --cached --quiet; then
-            echo "The Oracle dev manifest already uses this digest."
+            echo "The Oracle $TARGET_ENV manifest already uses this digest."
             exit 0
           fi
-          git -C gitops commit -m "Update ${IMAGE_NAME} dev image digest"
+          git -C gitops commit -m "Update ${IMAGE_NAME} ${TARGET_ENV} image digest"
           git -C gitops push --force origin "HEAD:refs/heads/$branch"
 
-          title="Update ${IMAGE_NAME} dev image digest"
-          body="CI published the immutable dev image ${IMAGE_REF}. Review and merge this pull request to let Argo CD sync the Oracle dev stack."
+          title="Update ${IMAGE_NAME} ${TARGET_ENV} image digest"
+          body="CI published the immutable ${TARGET_ENV} image ${IMAGE_REF}. Review and merge this pull request to let Argo CD sync the Oracle ${TARGET_ENV} stack."
           number="$(gh pr list --repo Disease-Prediction-ASET26/disease-prediction-gitops --head "$branch" --state open --json number --jq '.[0].number // empty')"
           if [[ -n "$number" ]]; then
             gh pr edit "$number" --repo Disease-Prediction-ASET26/disease-prediction-gitops --title "$title" --body "$body"
