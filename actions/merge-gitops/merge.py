@@ -304,11 +304,23 @@ def merge(api, settings):
         if not source_current(api, settings["source"]):
             print("Source branch moved; skip the superseded GitOps update.")
             return
-        result = api.request(
-            f"{REPO_PATH}/pulls/{settings['number']}/merge",
-            method="PUT",
-            body={"sha": head, "merge_method": "squash"},
-        )
+        try:
+            result = api.request(
+                f"{REPO_PATH}/pulls/{settings['number']}/merge",
+                method="PUT",
+                body={"sha": head, "merge_method": "squash"},
+            )
+        except urllib.error.HTTPError as error:
+            error.close()
+            if error.code not in (405, 409, 422):
+                raise
+            latest = api.pull(settings["number"])
+            verify_pull(latest, settings, head)
+            if latest["base"]["sha"] == base:
+                raise
+            print("GitOps main changed during merge; refresh the PR and check again.")
+            known_base = ""
+            continue
         if not result.get("merged"):
             raise ValueError("GitHub did not merge the GitOps PR")
         print(f"Merged GitOps PR #{settings['number']} after validation.")

@@ -1,6 +1,7 @@
 import copy
 import importlib.util
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -284,6 +285,79 @@ class MergeTests(unittest.TestCase):
             self.assertRaisesRegex(ValueError, "outside"),
         ):
             merge_gitops.updated_head(api, config(), HEAD, 10**20)
+
+    def test_retry_merge_only_when_the_base_has_moved(self):
+        for status in (405, 409, 422):
+            with self.subTest(status=status):
+                self.check_retry_after_base_move(status)
+
+    def check_retry_after_base_move(self, status):
+        api = FakeAPI()
+        previous = api.request
+        new_head = "e" * 40
+        new_base = "f" * 40
+        merge_attempts = []
+
+        def request(path, *, method="GET", body=None):
+            if path.endswith("/pulls/123/merge"):
+                merge_attempts.append(body["sha"])
+                if len(merge_attempts) == 1:
+                    api.current_pull["base"]["sha"] = new_base
+                    raise urllib.error.HTTPError(
+                        path, status, "merge rejected", {}, None
+                    )
+            return previous(path, method=method, body=body)
+
+        def update(_api, _settings, head, _deadline):
+            self.assertEqual(head, HEAD)
+            api.current_pull["head"]["sha"] = new_head
+            return new_head
+
+        with (
+            patch.object(api, "request", side_effect=request),
+            patch.object(
+                merge_gitops, "includes_base", side_effect=[True, False, True]
+            ),
+            patch.object(merge_gitops, "updated_head", side_effect=update),
+            patch.object(merge_gitops, "verify_change"),
+            patch.object(merge_gitops, "checked", return_value=True),
+        ):
+            merge_gitops.merge(api, config())
+        self.assertEqual(merge_attempts, [HEAD, new_head])
+
+    def test_merge_error_without_base_change_is_not_retried(self):
+        api = FakeAPI()
+        previous = api.request
+
+        def request(path, *, method="GET", body=None):
+            if path.endswith("/pulls/123/merge"):
+                raise urllib.error.HTTPError(path, 405, "merge rejected", {}, None)
+            return previous(path, method=method, body=body)
+
+        with (
+            patch.object(api, "request", side_effect=request),
+            patch.object(merge_gitops, "verify_change"),
+            self.assertRaises(urllib.error.HTTPError),
+        ):
+            merge_gitops.merge(api, config())
+
+    def test_merge_conflict_with_a_new_pr_head_is_not_retried(self):
+        api = FakeAPI()
+        previous = api.request
+
+        def request(path, *, method="GET", body=None):
+            if path.endswith("/pulls/123/merge"):
+                api.current_pull["base"]["sha"] = "f" * 40
+                api.current_pull["head"]["sha"] = "e" * 40
+                raise urllib.error.HTTPError(path, 409, "head changed", {}, None)
+            return previous(path, method=method, body=body)
+
+        with (
+            patch.object(api, "request", side_effect=request),
+            patch.object(merge_gitops, "verify_change"),
+            self.assertRaisesRegex(ValueError, "changed"),
+        ):
+            merge_gitops.merge(api, config())
 
 
 if __name__ == "__main__":
