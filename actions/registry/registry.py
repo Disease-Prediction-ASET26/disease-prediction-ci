@@ -128,7 +128,7 @@ def cleanup(api, *, only=None):
             continue
         pull = api.pull(number)
         for version_id in deletions(versions, pull, api.repository):
-            # Publication and cleanup jobs use the same repository concurrency group.
+            # Preview publication and cleanup share a concurrency group.
             latest = api.pull(number)
             if (
                 latest["state"] != pull["state"]

@@ -33,8 +33,9 @@ permissions:
   packages: write
   pull-requests: read
 concurrency:
-  group: registry-${{ github.repository }}
+  group: registry-${{ github.repository }}-${{ github.event_name == 'pull_request' && 'preview' || github.ref == 'refs/heads/main' && 'prod' || github.ref == 'refs/heads/develop' && 'dev' || 'other' }}
   cancel-in-progress: false
+  queue: max
 jobs:
   containerize:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
