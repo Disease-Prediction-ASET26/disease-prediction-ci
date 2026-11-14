@@ -88,8 +88,10 @@ shared workflow. After a successful push to `develop` or `main`, CI opens or
 updates a GitOps pull request with the published index digest for dev or prod,
 respectively. CI waits for GitOps validation and secret scanning, verifies the
 single image change, and merges the pull request so Argo CD can sync it. If
-checks fail or time out, the pull request stays open for review. CI refreshes
-the pull request and repeats the checks if the GitOps base branch changes. It
+checks fail or time out, the pull request stays open for review. CI checks the
+current GitOps main ref, refreshes the pull request when needed, and repeats its
+checks. GitOps main must require both checks and an up-to-date branch, without a
+bot bypass, to prevent a concurrent main update from bypassing validation. CI
 also waits briefly if GitHub is still calculating mergeability and reports the
 GitHub error when merging fails. The
 workflow needs a GitHub App installed only

@@ -183,17 +183,21 @@ def contents(api, path, revision):
     return base64.b64decode(payload["content"]).decode("utf-8")
 
 
-def verify_change(api, settings, pull, expected_head):
-    files = api.request(f"{REPO_PATH}/pulls/{settings['number']}/files?per_page=100")
+def verify_change(api, settings, base, expected_head):
+    comparison = api.request(
+        f"{REPO_PATH}/compare/{base}...{expected_head}?per_page=100"
+    )
+    files = comparison.get("files", [])
     if (
-        len(files) != 1
+        comparison.get("behind_by") != 0
+        or len(files) != 1
         or files[0].get("filename") != settings["manifest"]
         or files[0].get("status") != "modified"
         or files[0].get("additions") != 1
         or files[0].get("deletions") != 1
     ):
         raise ValueError("GitOps PR must change exactly one image line")
-    original = contents(api, settings["manifest"], pull["base"]["sha"])
+    original = contents(api, settings["manifest"], base)
     updated = contents(api, settings["manifest"], expected_head)
     if image_change(original, settings["deployment"], settings["image"]) != updated:
         raise ValueError("GitOps PR changes more than the intended Deployment image")
@@ -278,10 +282,6 @@ def request_branch_update(api, settings, old_head, deadline):
         pull = api.pull(settings["number"])
         verify_pull(pull, settings, old_head)
         base = main_head(api)
-        if pull["base"]["sha"] != base:
-            print("Waiting for the GitOps PR to reflect the latest main branch.")
-            time.sleep(5)
-            continue
         if base != attempted_base:
             attempted_base = base
             failures = 0
@@ -300,7 +300,7 @@ def request_branch_update(api, settings, old_head, deadline):
             latest = api.pull(settings["number"])
             verify_pull(latest, settings, old_head)
             current_base = main_head(api)
-            if current_base != base or latest["base"]["sha"] != current_base:
+            if current_base != base:
                 print("GitOps main changed during branch update; check again.")
                 time.sleep(5)
                 continue
@@ -362,10 +362,6 @@ def merge(api, settings):
         pull = api.pull(settings["number"])
         verify_pull(pull, settings, head)
         base = main_head(api)
-        if pull["base"]["sha"] != base:
-            print("Waiting for the GitOps PR to reflect the latest main branch.")
-            time.sleep(5)
-            continue
         if failure_target != (head, base):
             failure_target = (head, base)
             merge_failures = 0
@@ -381,18 +377,20 @@ def merge(api, settings):
             continue
         pull = api.pull(settings["number"])
         verify_pull(pull, settings, head)
-        if pull["base"]["sha"] != base or main_head(api) != base:
+        if main_head(api) != base:
             continue
-        verify_change(api, settings, pull, head)
+        verify_change(api, settings, base, head)
         if not checked(api, head):
             continue
         pull = api.pull(settings["number"])
         verify_pull(pull, settings, head)
-        if pull["base"]["sha"] != base or main_head(api) != base:
+        if main_head(api) != base:
             continue
         if not source_current(api, settings["source"]):
             print("Source branch moved; skip the superseded GitOps update.")
             return
+        if main_head(api) != base:
+            continue
         try:
             result = api.request(
                 f"{REPO_PATH}/pulls/{settings['number']}/merge",
@@ -407,7 +405,7 @@ def merge(api, settings):
             latest = api.pull(settings["number"])
             verify_pull(latest, settings, head)
             current_base = main_head(api)
-            if current_base != base or latest["base"]["sha"] != current_base:
+            if current_base != base:
                 print(
                     "GitOps main changed during merge; refresh the PR and check again."
                 )
