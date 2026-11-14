@@ -1,0 +1,54 @@
+name: Merge a checked GitOps image update
+description: Verify one image change and its GitOps checks before merging the pull request.
+inputs:
+  token:
+    description: GitHub App installation token with GitOps Contents and Pull requests write permissions.
+    required: true
+  number:
+    description: GitOps pull request number.
+    required: true
+  head-sha:
+    description: Expected pull request head SHA.
+    required: true
+  manifest:
+    description: Expected GitOps manifest path.
+    required: true
+  deployment:
+    description: Expected Deployment name.
+    required: true
+  image:
+    description: Published immutable image reference.
+    required: true
+  source-repository:
+    description: Source repository, when a source head must remain current.
+    required: false
+    default: ''
+  source-branch:
+    description: Source branch, when a source head must remain current.
+    required: false
+    default: ''
+  source-sha:
+    description: Source commit, when a source head must remain current.
+    required: false
+    default: ''
+  timeout-seconds:
+    description: Maximum wait for GitOps checks, between 60 and 1200 seconds.
+    required: false
+    default: '600'
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GITOPS_TOKEN: ${{ inputs.token }}
+        PR_NUMBER: ${{ inputs.number }}
+        EXPECTED_HEAD: ${{ inputs.head-sha }}
+        MANIFEST_PATH: ${{ inputs.manifest }}
+        DEPLOYMENT: ${{ inputs.deployment }}
+        IMAGE_REF: ${{ inputs.image }}
+        SOURCE_REPOSITORY: ${{ inputs.source-repository }}
+        SOURCE_BRANCH: ${{ inputs.source-branch }}
+        SOURCE_SHA: ${{ inputs.source-sha }}
+        TIMEOUT_SECONDS: ${{ inputs.timeout-seconds }}
+        MERGER_SCRIPT: ${{ github.action_path }}/merge.py
+      run: python3 "$MERGER_SCRIPT"

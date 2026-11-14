@@ -221,7 +221,7 @@ jobs:
     needs:
       - publish
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - name: Require GitOps app credentials
         env:
@@ -290,14 +290,10 @@ jobs:
                   continue
               if not re.search(rf"(?m)^  name: {re.escape(deployment)}$", section):
                   continue
-              lines = section.splitlines()
-              image_lines = [i for i, line in enumerate(lines) if re.match(r"^\s+image:\s", line)]
-              if len(image_lines) != 1:
+              pattern = r"(?m)^([ \t]*image:[ \t]*)[^\r\n]+"
+              if len(re.findall(pattern, section)) != 1:
                   raise SystemExit(f"Expected one image in the {deployment} Deployment")
-              line_index = image_lines[0]
-              indent = re.match(r"^(\s+image:\s*)", lines[line_index]).group(1)
-              lines[line_index] = indent + image_ref
-              sections[index] = "\n".join(lines)
+              sections[index] = re.sub(pattern, lambda match: match[1] + image_ref, section, count=1)
               matches += 1
 
           if matches != 1:
@@ -307,6 +303,7 @@ jobs:
           git -C gitops diff --check
 
       - name: Open or update the GitOps pull request
+        id: gitops-pr
         env:
           GH_TOKEN: ${{ steps.gitops-token.outputs.token }}
           IMAGE_NAME: ${{ inputs.gitops-image-name }}
@@ -338,4 +335,32 @@ jobs:
             gh pr edit "$number" --repo Disease-Prediction-ASET26/disease-prediction-gitops --title "$title" --body "$body"
           else
             gh pr create --repo Disease-Prediction-ASET26/disease-prediction-gitops --base main --head "$branch" --title "$title" --body "$body"
+            number="$(gh pr list --repo Disease-Prediction-ASET26/disease-prediction-gitops --head "$branch" --state open --json number --jq '.[0].number // empty')"
           fi
+          [[ "$number" =~ ^[0-9]+$ ]]
+          head_sha="$(git -C gitops rev-parse HEAD)"
+          [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]
+          printf 'number=%s\nhead-sha=%s\n' "$number" "$head_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the shared merger
+        if: ${{ steps.gitops-pr.outputs.number != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          ref: ${{ fromJSON(toJSON(job)).workflow_sha }}
+          path: shared-ci
+          persist-credentials: false
+
+      - name: Merge the checked GitOps update
+        if: ${{ steps.gitops-pr.outputs.number != '' }}
+        uses: ./shared-ci/actions/merge-gitops
+        with:
+          token: ${{ steps.gitops-token.outputs.token }}
+          number: ${{ steps.gitops-pr.outputs.number }}
+          head-sha: ${{ steps.gitops-pr.outputs.head-sha }}
+          manifest: ${{ github.ref == 'refs/heads/main' && 'clusters/oracle/disease-prediction-prod/deployments.yaml' || 'clusters/oracle/disease-prediction/deployments.yaml' }}
+          deployment: ${{ inputs.gitops-image-name }}
+          image: ${{ needs.publish.outputs.image-digest }}
+          source-repository: ${{ github.repository }}
+          source-branch: ${{ github.ref_name }}
+          source-sha: ${{ github.sha }}

@@ -86,7 +86,10 @@ the same workflow attempt.
 The backend and frontend pipelines pass their Oracle Deployment names to the
 shared workflow. After a successful push to `develop` or `main`, CI opens or
 updates a GitOps pull request with the published index digest for dev or prod,
-respectively. Merge that pull request to let Argo CD sync the new image. The
+respectively. CI waits for GitOps validation and secret scanning, verifies the
+single image change, and merges the pull request so Argo CD can sync it. If
+checks fail or time out, the pull request stays open for review. CI refreshes
+the pull request and repeats the checks if the GitOps base branch changes. The
 workflow needs a GitHub App installed only
 on `disease-prediction-gitops`, with Contents and Pull requests write access;
 the calling repositories must provide `GITOPS_CLIENT_ID` (the app Client ID) and
