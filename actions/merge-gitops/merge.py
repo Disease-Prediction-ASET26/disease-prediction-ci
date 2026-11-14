@@ -291,7 +291,7 @@ def request_branch_update(api, settings, old_head, deadline):
                 method="PUT",
                 body={"expected_head_sha": old_head},
             )
-            return
+            return True
         except urllib.error.HTTPError as error:
             status = error.code
             detail = http_error_detail(error)
@@ -308,6 +308,9 @@ def request_branch_update(api, settings, old_head, deadline):
                 raise ValueError(
                     f"{detail}; the GitOps PR has merge conflicts"
                 ) from error
+            if includes_base(api, current_base, old_head):
+                print("GitOps PR already contains main; check it again before merging.")
+                return False
             failures += 1
             if failures >= MERGE_RETRY_LIMIT:
                 raise ValueError(
@@ -319,7 +322,8 @@ def request_branch_update(api, settings, old_head, deadline):
 
 
 def updated_head(api, settings, old_head, deadline):
-    request_branch_update(api, settings, old_head, deadline)
+    if not request_branch_update(api, settings, old_head, deadline):
+        return old_head
     while time.monotonic() < deadline:
         pull = api.pull(settings["number"])
         new_head = pull.get("head", {}).get("sha", "")

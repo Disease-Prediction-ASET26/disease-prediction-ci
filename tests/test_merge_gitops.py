@@ -580,6 +580,7 @@ class MergeTests(unittest.TestCase):
 
         with (
             patch.object(api, "request", side_effect=request),
+            patch.object(merge_gitops, "includes_base", return_value=False),
             patch.object(merge_gitops.time, "sleep"),
         ):
             merge_gitops.request_branch_update(api, config(), HEAD, 10**20)
@@ -605,6 +606,7 @@ class MergeTests(unittest.TestCase):
 
         with (
             patch.object(api, "request", side_effect=request),
+            patch.object(merge_gitops, "includes_base", return_value=False),
             patch.object(merge_gitops.time, "sleep", side_effect=sleep),
         ):
             merge_gitops.request_branch_update(api, config(), HEAD, 10**20)
@@ -678,11 +680,33 @@ class MergeTests(unittest.TestCase):
 
         with (
             patch.object(api, "request", side_effect=request),
+            patch.object(merge_gitops, "includes_base", return_value=False),
             patch.object(merge_gitops.time, "sleep"),
             self.assertRaisesRegex(ValueError, "branch update.*retries exhausted"),
         ):
             merge_gitops.request_branch_update(api, config(), HEAD, 10**20)
         self.assertEqual(len(attempts), merge_gitops.MERGE_RETRY_LIMIT)
+
+    def test_branch_update_error_rechecks_when_pr_already_contains_main(self):
+        api = FakeAPI()
+        previous = api.request
+        attempts = []
+
+        def request(path, *, method="GET", body=None):
+            if path.endswith("/pulls/123/update-branch"):
+                attempts.append(body["expected_head_sha"])
+                raise urllib.error.HTTPError(path, 422, "already up to date", {}, None)
+            return previous(path, method=method, body=body)
+
+        with (
+            patch.object(api, "request", side_effect=request),
+            patch.object(merge_gitops.time, "sleep") as sleep,
+        ):
+            self.assertEqual(
+                merge_gitops.updated_head(api, config(), HEAD, 10**20), HEAD
+            )
+        self.assertEqual(attempts, [HEAD])
+        sleep.assert_not_called()
 
     def test_branch_update_poll_rejects_closed_or_conflicted_pr(self):
         for condition in ("closed", "dirty"):
