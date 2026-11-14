@@ -1,10 +1,11 @@
+import base64
 import copy
 import importlib.util
 import io
 import unittest
 import urllib.error
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
@@ -157,11 +158,14 @@ class TargetTests(unittest.TestCase):
 
     def test_rejects_additional_content_change(self):
         api = FakeAPI()
-        files = [
-            {"filename": PATH, "status": "modified", "additions": 1, "deletions": 1}
-        ]
+        comparison = {
+            "behind_by": 0,
+            "files": [
+                {"filename": PATH, "status": "modified", "additions": 1, "deletions": 1}
+            ],
+        }
         with (
-            patch.object(api, "request", return_value=files),
+            patch.object(api, "request", return_value=comparison),
             patch.object(
                 merge_gitops,
                 "contents",
@@ -169,7 +173,52 @@ class TargetTests(unittest.TestCase):
             ),
             self.assertRaisesRegex(ValueError, "more than"),
         ):
-            merge_gitops.verify_change(api, config(), pull(), HEAD)
+            merge_gitops.verify_change(api, config(), BASE, HEAD)
+
+    def test_change_uses_explicit_main_for_diff_and_content(self):
+        api = FakeAPI()
+        current_base = "e" * 40
+        comparison = {
+            "behind_by": 0,
+            "files": [
+                {"filename": PATH, "status": "modified", "additions": 1, "deletions": 1}
+            ],
+        }
+        with (
+            patch.object(api, "request", return_value=comparison) as request,
+            patch.object(
+                merge_gitops, "contents", side_effect=[ORIGINAL, UPDATED]
+            ) as read,
+        ):
+            merge_gitops.verify_change(api, config(), current_base, HEAD)
+        request.assert_called_once_with(
+            f"{merge_gitops.REPO_PATH}/compare/{current_base}...{HEAD}?per_page=100"
+        )
+        self.assertEqual(
+            read.call_args_list,
+            [call(api, PATH, current_base), call(api, PATH, HEAD)],
+        )
+
+    def test_change_rejects_behind_head_and_additional_file(self):
+        api = FakeAPI()
+        intended = {
+            "filename": PATH,
+            "status": "modified",
+            "additions": 1,
+            "deletions": 1,
+        }
+        for comparison in (
+            {"behind_by": 1, "files": [intended]},
+            {"behind_by": 0, "files": [intended, {"filename": "other.yaml"}]},
+        ):
+            with (
+                self.subTest(comparison=comparison),
+                patch.object(api, "request", return_value=comparison),
+                patch.object(merge_gitops, "contents") as read,
+                self.assertRaisesRegex(ValueError, "exactly one image line"),
+            ):
+                merge_gitops.verify_change(api, config(), BASE, HEAD)
+            read.assert_not_called()
 
     def test_rejects_wrong_pr_author_and_head(self):
         for change in ("author", "head"):
@@ -242,6 +291,53 @@ class MergeTests(unittest.TestCase):
         ):
             merge_gitops.merge(api, config())
         self.assertFalse(any(method != "GET" for _, method, _ in api.requests))
+
+    def test_main_moving_during_verification_rechecks_before_merging(self):
+        for stage in ("change", "source"):
+            with self.subTest(stage=stage):
+                self.check_main_moving_during_verification(stage)
+
+    def check_main_moving_during_verification(self, stage):
+        api = FakeAPI()
+        new_base, new_head = "f" * 40, "e" * 40
+        verified = []
+        source_calls = []
+
+        def verify(_api, _settings, base, head):
+            verified.append((base, head))
+            if stage == "change" and len(verified) == 1:
+                api.base = new_base
+
+        def source_current(_api, _source):
+            source_calls.append(True)
+            if stage == "source" and len(source_calls) == 2:
+                api.base = new_base
+            return True
+
+        def update(_api, _settings, head, _deadline):
+            self.assertEqual(head, HEAD)
+            api.current_pull["head"]["sha"] = new_head
+            return new_head
+
+        with (
+            patch.object(merge_gitops, "verify_change", side_effect=verify),
+            patch.object(merge_gitops, "source_current", side_effect=source_current),
+            patch.object(
+                merge_gitops,
+                "includes_base",
+                side_effect=lambda _api, base, head: base == BASE or head == new_head,
+            ),
+            patch.object(merge_gitops, "updated_head", side_effect=update),
+            patch.object(merge_gitops, "checked", return_value=True) as checked,
+        ):
+            merge_gitops.merge(api, config())
+        self.assertEqual(verified, [(BASE, HEAD), (new_base, new_head)])
+        self.assertTrue(
+            any(item.args == (api, new_head) for item in checked.call_args_list)
+        )
+        merges = [request for request in api.requests if request[0].endswith("/merge")]
+        self.assertEqual(len(merges), 1)
+        self.assertEqual(merges[0][2]["sha"], new_head)
 
     def test_changed_head_never_merges(self):
         api = FakeAPI()
@@ -431,20 +527,11 @@ class MergeTests(unittest.TestCase):
         )
         refresh.assert_called_once()
 
-    def test_main_ref_change_waits_for_stale_pr_and_refreshes_head(self):
+    def test_permanently_stale_pr_base_refreshes_and_merges_checked_head(self):
         api = FakeAPI()
         new_base = "f" * 40
         new_head = "e" * 40
         api.base = new_base
-        pull_calls = 0
-
-        def stale_pull(number):
-            nonlocal pull_calls
-            result = copy.deepcopy(api.current_pull)
-            pull_calls += 1
-            if pull_calls == 1:
-                api.current_pull["base"]["sha"] = new_base
-            return result
 
         def update(_api, _settings, head, _deadline):
             self.assertEqual(head, HEAD)
@@ -452,16 +539,19 @@ class MergeTests(unittest.TestCase):
             return new_head
 
         with (
-            patch.object(api, "pull", side_effect=stale_pull),
             patch.object(merge_gitops, "includes_base", side_effect=[False, True]),
             patch.object(merge_gitops, "updated_head", side_effect=update) as refresh,
-            patch.object(merge_gitops, "verify_change"),
-            patch.object(merge_gitops, "checked", return_value=True),
+            patch.object(merge_gitops, "verify_change") as verify,
+            patch.object(merge_gitops, "checked", return_value=True) as checked,
             patch.object(merge_gitops.time, "sleep") as sleep,
         ):
             merge_gitops.merge(api, config())
-        sleep.assert_called_once_with(5)
+        sleep.assert_not_called()
         refresh.assert_called_once()
+        verify.assert_called_once_with(api, config(), new_base, new_head)
+        self.assertTrue(
+            all(call.args == (api, new_head) for call in checked.call_args_list)
+        )
         self.assertIn(
             (
                 f"{merge_gitops.REPO_PATH}/pulls/123/merge",
@@ -471,12 +561,82 @@ class MergeTests(unittest.TestCase):
             api.requests,
         )
 
+    def test_permanently_stale_pr_base_end_to_end(self):
+        api = FakeAPI()
+        new_base, new_head = "f" * 40, "e" * 40
+        api.base = new_base
+        previous = api.request
+
+        def request(path, *, method="GET", body=None):
+            if path.endswith("/pulls/123/update-branch"):
+                self.assertEqual(body, {"expected_head_sha": HEAD})
+                api.current_pull["head"]["sha"] = new_head
+                api.check_runs = checks(
+                    check("validate", 1, head=new_head),
+                    check("secret-scan / secret-scan", 2, head=new_head),
+                )
+                api.run["head_sha"] = new_head
+                api.requests.append((path, method, body))
+                return None
+            if path.endswith(f"/git/commits/{new_head}"):
+                return {"parents": [{"sha": HEAD}, {"sha": new_base}]}
+            if "/compare/" in path:
+                base_and_head = path.split("/compare/", 1)[1].split("?", 1)[0]
+                behind = base_and_head == f"{new_base}...{HEAD}"
+                return {
+                    "behind_by": int(behind),
+                    "files": [
+                        {
+                            "filename": PATH,
+                            "status": "modified",
+                            "additions": 1,
+                            "deletions": 1,
+                        }
+                    ],
+                }
+            if "/contents/" in path:
+                revision = path.split("?ref=", 1)[1]
+                self.assertIn(revision, (new_base, new_head))
+                content = ORIGINAL if revision == new_base else UPDATED
+                return {
+                    "encoding": "base64",
+                    "content": base64.b64encode(content.encode()).decode(),
+                }
+            return previous(path, method=method, body=body)
+
+        with (
+            patch.object(api, "request", side_effect=request),
+            patch.object(merge_gitops.time, "sleep") as sleep,
+        ):
+            merge_gitops.merge(api, config())
+        self.assertEqual(api.current_pull["base"]["sha"], BASE)
+        self.assertIn(
+            (
+                f"{merge_gitops.REPO_PATH}/pulls/123/merge",
+                "PUT",
+                {"sha": new_head, "merge_method": "squash"},
+            ),
+            api.requests,
+        )
+        sleep.assert_not_called()
+
+    def test_stale_pr_base_already_includes_main(self):
+        api = FakeAPI()
+        api.base = "f" * 40
+        with (
+            patch.object(merge_gitops, "verify_change") as verify,
+            patch.object(merge_gitops, "updated_head") as update,
+        ):
+            merge_gitops.merge(api, config())
+        verify.assert_called_once_with(api, config(), api.base, HEAD)
+        update.assert_not_called()
+        self.assertTrue(any(path.endswith("/merge") for path, _, _ in api.requests))
+
     def test_merge_405_recovers_when_pr_base_api_is_stale(self):
         api = FakeAPI()
         previous = api.request
         new_base, new_head = "f" * 40, "e" * 40
         attempts = []
-        stale_reads = 0
 
         def request(path, *, method="GET", body=None):
             if path.endswith("/pulls/123/merge"):
@@ -486,15 +646,6 @@ class MergeTests(unittest.TestCase):
                     raise urllib.error.HTTPError(path, 405, "not mergeable", {}, None)
             return previous(path, method=method, body=body)
 
-        def stale_pull(number):
-            nonlocal stale_reads
-            result = copy.deepcopy(api.current_pull)
-            if api.base != api.current_pull["base"]["sha"]:
-                stale_reads += 1
-                if stale_reads == 2:
-                    api.current_pull["base"]["sha"] = new_base
-            return result
-
         def update(_api, _settings, head, _deadline):
             self.assertEqual(head, HEAD)
             api.current_pull["head"]["sha"] = new_head
@@ -502,7 +653,6 @@ class MergeTests(unittest.TestCase):
 
         with (
             patch.object(api, "request", side_effect=request),
-            patch.object(api, "pull", side_effect=stale_pull),
             patch.object(
                 merge_gitops, "includes_base", side_effect=[True, False, True]
             ),
@@ -586,7 +736,7 @@ class MergeTests(unittest.TestCase):
             merge_gitops.request_branch_update(api, config(), HEAD, 10**20)
         self.assertEqual(attempts, [HEAD, HEAD])
 
-    def test_branch_update_waits_for_stale_base_before_retry(self):
+    def test_branch_update_retries_when_main_moves_and_pr_base_stays_stale(self):
         api = FakeAPI()
         previous = api.request
         attempts = []
@@ -601,16 +751,37 @@ class MergeTests(unittest.TestCase):
                 return None
             return previous(path, method=method, body=body)
 
-        def sleep(_seconds):
-            api.current_pull["base"]["sha"] = new_base
-
         with (
             patch.object(api, "request", side_effect=request),
             patch.object(merge_gitops, "includes_base", return_value=False),
-            patch.object(merge_gitops.time, "sleep", side_effect=sleep),
+            patch.object(merge_gitops.time, "sleep") as sleep,
         ):
             merge_gitops.request_branch_update(api, config(), HEAD, 10**20)
         self.assertEqual(attempts, [HEAD, HEAD])
+        self.assertEqual(api.current_pull["base"]["sha"], BASE)
+        sleep.assert_called_once_with(5)
+
+    def test_branch_update_starts_with_permanently_stale_pr_base(self):
+        api = FakeAPI()
+        api.base = "f" * 40
+        previous = api.request
+        attempts = []
+
+        def request(path, *, method="GET", body=None):
+            if path.endswith("/pulls/123/update-branch"):
+                attempts.append(body["expected_head_sha"])
+                return None
+            return previous(path, method=method, body=body)
+
+        with (
+            patch.object(api, "request", side_effect=request),
+            patch.object(merge_gitops.time, "sleep") as sleep,
+        ):
+            self.assertTrue(
+                merge_gitops.request_branch_update(api, config(), HEAD, 10**20)
+            )
+        self.assertEqual(attempts, [HEAD])
+        sleep.assert_not_called()
 
     def test_branch_update_rejects_changed_head_and_conflict(self):
         for condition in ("head", "conflict"):
@@ -669,6 +840,7 @@ class MergeTests(unittest.TestCase):
 
     def test_branch_update_stops_after_bounded_retries(self):
         api = FakeAPI()
+        api.base = "f" * 40
         previous = api.request
         attempts = []
 
