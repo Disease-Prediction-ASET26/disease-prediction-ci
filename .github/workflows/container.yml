@@ -33,7 +33,7 @@ permissions:
   packages: write
   pull-requests: read
 concurrency:
-  group: registry-${{ github.repository }}-${{ github.event_name == 'pull_request' && 'preview' || github.ref == 'refs/heads/main' && 'prod' || github.ref == 'refs/heads/develop' && 'dev' || 'other' }}
+  group: registry-${{ github.repository }}${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' && '-prod' || github.ref == 'refs/heads/develop' && '-dev' || '-other') || '' }}
   cancel-in-progress: false
   queue: max
 jobs:

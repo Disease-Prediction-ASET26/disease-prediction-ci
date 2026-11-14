@@ -64,9 +64,9 @@ class WorkflowTests(unittest.TestCase):
         cleanup = workflow("preview-cleanup.yml")["jobs"]["cleanup"]["concurrency"]
         self.assertEqual(
             publisher["group"],
-            "registry-${{ github.repository }}-${{ github.event_name == 'pull_request' && 'preview' || github.ref == 'refs/heads/main' && 'prod' || github.ref == 'refs/heads/develop' && 'dev' || 'other' }}",
+            "registry-${{ github.repository }}${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' && '-prod' || github.ref == 'refs/heads/develop' && '-dev' || '-other') || '' }}",
         )
-        self.assertEqual(cleanup["group"], "registry-${{ github.repository }}-preview")
+        self.assertEqual(cleanup["group"], "registry-${{ github.repository }}")
         self.assertFalse(publisher["cancel-in-progress"])
         self.assertFalse(cleanup["cancel-in-progress"])
         self.assertEqual(publisher["queue"], "max")

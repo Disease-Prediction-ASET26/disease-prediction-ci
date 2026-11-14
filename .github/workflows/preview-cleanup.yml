@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
-      group: registry-${{ github.repository }}-preview
+      group: registry-${{ github.repository }}
       cancel-in-progress: false
       queue: max
     steps:
