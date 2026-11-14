@@ -270,6 +270,7 @@ class MergeTests(unittest.TestCase):
                 "request",
                 side_effect=[None, {"parents": [{"sha": HEAD}, {"sha": BASE}]}],
             ) as request,
+            patch.object(api, "pull", side_effect=[pull(), api.current_pull]),
             patch.object(merge_gitops, "includes_base", return_value=True),
             patch.object(merge_gitops, "main_head", return_value=BASE),
         ):
@@ -287,6 +288,8 @@ class MergeTests(unittest.TestCase):
                 "request",
                 side_effect=[None, {"parents": [{"sha": "f" * 40}, {"sha": BASE}]}],
             ),
+            patch.object(api, "pull", side_effect=[pull(), api.current_pull]),
+            patch.object(merge_gitops, "main_head", return_value=BASE),
             self.assertRaisesRegex(ValueError, "outside"),
         ):
             merge_gitops.updated_head(api, config(), HEAD, 10**20)
@@ -550,6 +553,152 @@ class MergeTests(unittest.TestCase):
             merge_gitops.merge(api, config())
         self.assertEqual(attempts, [HEAD])
         sleep.assert_not_called()
+
+    def test_branch_update_retries_transient_rejections(self):
+        for status in (405, 409, 422):
+            with self.subTest(status=status):
+                self.check_branch_update_retry(status)
+
+    def check_branch_update_retry(self, status):
+        api = FakeAPI()
+        previous = api.request
+        attempts = []
+
+        def request(path, *, method="GET", body=None):
+            if path.endswith("/pulls/123/update-branch"):
+                attempts.append(body["expected_head_sha"])
+                if len(attempts) == 1:
+                    raise urllib.error.HTTPError(
+                        path,
+                        status,
+                        "request rejected",
+                        {},
+                        io.BytesIO(b'{"message":"Please try again"}'),
+                    )
+                return None
+            return previous(path, method=method, body=body)
+
+        with (
+            patch.object(api, "request", side_effect=request),
+            patch.object(merge_gitops.time, "sleep"),
+        ):
+            merge_gitops.request_branch_update(api, config(), HEAD, 10**20)
+        self.assertEqual(attempts, [HEAD, HEAD])
+
+    def test_branch_update_waits_for_stale_base_before_retry(self):
+        api = FakeAPI()
+        previous = api.request
+        attempts = []
+        new_base = "f" * 40
+
+        def request(path, *, method="GET", body=None):
+            if path.endswith("/pulls/123/update-branch"):
+                attempts.append(body["expected_head_sha"])
+                if len(attempts) == 1:
+                    api.base = new_base
+                    raise urllib.error.HTTPError(path, 422, "stale base", {}, None)
+                return None
+            return previous(path, method=method, body=body)
+
+        def sleep(_seconds):
+            api.current_pull["base"]["sha"] = new_base
+
+        with (
+            patch.object(api, "request", side_effect=request),
+            patch.object(merge_gitops.time, "sleep", side_effect=sleep),
+        ):
+            merge_gitops.request_branch_update(api, config(), HEAD, 10**20)
+        self.assertEqual(attempts, [HEAD, HEAD])
+
+    def test_branch_update_rejects_changed_head_and_conflict(self):
+        for condition in ("head", "conflict"):
+            with self.subTest(condition=condition):
+                self.check_rejected_branch_update(condition)
+
+    def check_rejected_branch_update(self, condition):
+        api = FakeAPI()
+        previous = api.request
+        attempts = []
+
+        def request(path, *, method="GET", body=None):
+            if path.endswith("/pulls/123/update-branch"):
+                attempts.append(body["expected_head_sha"])
+                if condition == "head":
+                    api.current_pull["head"]["sha"] = "e" * 40
+                else:
+                    api.current_pull["mergeable_state"] = "dirty"
+                raise urllib.error.HTTPError(path, 405, "request rejected", {}, None)
+            return previous(path, method=method, body=body)
+
+        with (
+            patch.object(api, "request", side_effect=request),
+            patch.object(merge_gitops.time, "sleep") as sleep,
+            self.assertRaises(ValueError),
+        ):
+            merge_gitops.request_branch_update(api, config(), HEAD, 10**20)
+        self.assertEqual(attempts, [HEAD])
+        sleep.assert_not_called()
+
+    def test_branch_update_reports_permissions_without_retry(self):
+        api = FakeAPI()
+        previous = api.request
+        attempts = []
+
+        def request(path, *, method="GET", body=None):
+            if path.endswith("/pulls/123/update-branch"):
+                attempts.append(body["expected_head_sha"])
+                raise urllib.error.HTTPError(
+                    path,
+                    403,
+                    "Forbidden",
+                    {},
+                    io.BytesIO(b'{"message":"Resource not accessible by integration"}'),
+                )
+            return previous(path, method=method, body=body)
+
+        with (
+            patch.object(api, "request", side_effect=request),
+            patch.object(merge_gitops.time, "sleep") as sleep,
+            self.assertRaisesRegex(ValueError, "branch update.*not accessible"),
+        ):
+            merge_gitops.request_branch_update(api, config(), HEAD, 10**20)
+        self.assertEqual(attempts, [HEAD])
+        sleep.assert_not_called()
+
+    def test_branch_update_stops_after_bounded_retries(self):
+        api = FakeAPI()
+        previous = api.request
+        attempts = []
+
+        def request(path, *, method="GET", body=None):
+            if path.endswith("/pulls/123/update-branch"):
+                attempts.append(body["expected_head_sha"])
+                raise urllib.error.HTTPError(path, 405, "request rejected", {}, None)
+            return previous(path, method=method, body=body)
+
+        with (
+            patch.object(api, "request", side_effect=request),
+            patch.object(merge_gitops.time, "sleep"),
+            self.assertRaisesRegex(ValueError, "branch update.*retries exhausted"),
+        ):
+            merge_gitops.request_branch_update(api, config(), HEAD, 10**20)
+        self.assertEqual(len(attempts), merge_gitops.MERGE_RETRY_LIMIT)
+
+    def test_branch_update_poll_rejects_closed_or_conflicted_pr(self):
+        for condition in ("closed", "dirty"):
+            api = FakeAPI()
+            if condition == "closed":
+                api.current_pull["state"] = "closed"
+            else:
+                api.current_pull["mergeable_state"] = "dirty"
+            with (
+                self.subTest(condition=condition),
+                patch.object(merge_gitops, "request_branch_update"),
+                patch.object(merge_gitops.time, "sleep") as sleep,
+                self.assertRaises(ValueError),
+            ):
+                merge_gitops.updated_head(api, config(), HEAD, 10**20)
+            sleep.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -271,12 +271,55 @@ def main_head(api):
     return head
 
 
+def request_branch_update(api, settings, old_head, deadline):
+    failures = 0
+    attempted_base = ""
+    while time.monotonic() < deadline:
+        pull = api.pull(settings["number"])
+        verify_pull(pull, settings, old_head)
+        base = main_head(api)
+        if pull["base"]["sha"] != base:
+            print("Waiting for the GitOps PR to reflect the latest main branch.")
+            time.sleep(5)
+            continue
+        if base != attempted_base:
+            attempted_base = base
+            failures = 0
+        try:
+            api.request(
+                f"{REPO_PATH}/pulls/{settings['number']}/update-branch",
+                method="PUT",
+                body={"expected_head_sha": old_head},
+            )
+            return
+        except urllib.error.HTTPError as error:
+            status = error.code
+            detail = http_error_detail(error)
+            if status not in (405, 409, 422):
+                raise ValueError(f"GitOps branch update failed: {detail}") from error
+            latest = api.pull(settings["number"])
+            verify_pull(latest, settings, old_head)
+            current_base = main_head(api)
+            if current_base != base or latest["base"]["sha"] != current_base:
+                print("GitOps main changed during branch update; check again.")
+                time.sleep(5)
+                continue
+            if latest.get("mergeable_state") == "dirty":
+                raise ValueError(
+                    f"{detail}; the GitOps PR has merge conflicts"
+                ) from error
+            failures += 1
+            if failures >= MERGE_RETRY_LIMIT:
+                raise ValueError(
+                    f"GitOps branch update failed: {detail}; retries exhausted"
+                ) from error
+            print(f"GitOps branch update: {detail}; waiting before retrying.")
+            time.sleep(5)
+    raise TimeoutError("Timed out requesting the GitOps PR branch update")
+
+
 def updated_head(api, settings, old_head, deadline):
-    api.request(
-        f"{REPO_PATH}/pulls/{settings['number']}/update-branch",
-        method="PUT",
-        body={"expected_head_sha": old_head},
-    )
+    request_branch_update(api, settings, old_head, deadline)
     while time.monotonic() < deadline:
         pull = api.pull(settings["number"])
         new_head = pull.get("head", {}).get("sha", "")
@@ -295,6 +338,9 @@ def updated_head(api, settings, old_head, deadline):
                 raise ValueError("PR head changed outside the expected base update")
             print("Updated the PR branch; waiting for checks on its new head.")
             return new_head
+        verify_pull(pull, settings, old_head)
+        if pull.get("mergeable_state") == "dirty":
+            raise ValueError("The GitOps PR has merge conflicts")
         time.sleep(5)
     raise TimeoutError("Timed out updating the GitOps PR branch")
 
@@ -353,7 +399,7 @@ def merge(api, settings):
             status = error.code
             detail = http_error_detail(error)
             if status not in (405, 409, 422):
-                raise ValueError(detail) from error
+                raise ValueError(f"GitOps merge failed: {detail}") from error
             latest = api.pull(settings["number"])
             verify_pull(latest, settings, head)
             current_base = main_head(api)
@@ -369,8 +415,10 @@ def merge(api, settings):
                 ) from error
             merge_failures += 1
             if merge_failures >= MERGE_RETRY_LIMIT:
-                raise ValueError(f"{detail}; merge retries exhausted") from error
-            print(f"{detail}; waiting before rechecking GitOps mergeability.")
+                raise ValueError(
+                    f"GitOps merge failed: {detail}; retries exhausted"
+                ) from error
+            print(f"GitOps merge: {detail}; waiting before rechecking mergeability.")
             known_base = ""
             time.sleep(5)
             continue
