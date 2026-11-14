@@ -136,8 +136,11 @@ The local, dev, and production Compose environments are documented in the
 | [preview-cleanup.yml](.github/workflows/preview-cleanup.yml) | Remove outdated PR preview images.              |
 | [validate.yml](.github/workflows/validate.yml)               | Check shared workflows and Python tools.        |
 
-Actions and reusable workflows use full commit SHAs. Dependabot proposes weekly
-updates. See [TOOL-VERSIONS.md](TOOL-VERSIONS.md) for the pinned versions.
+Actions and reusable workflows use full commit SHAs. Dependabot checks the GitHub
+Actions and scanner image every other Monday at 09:00 Europe/Bucharest. Repositories
+with a `develop` branch target version-update pull requests there. GitHub still targets
+security-update pull requests at the default branch. See [TOOL-VERSIONS.md](TOOL-VERSIONS.md)
+for the pinned versions.
 
 ## Check changes to this repository
 
