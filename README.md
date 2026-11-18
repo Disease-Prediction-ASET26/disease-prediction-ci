@@ -96,9 +96,22 @@ available fix; unfixed findings remain visible in the reports for review.
 If a platform build fails, rerun all jobs so both platform images come from
 the same workflow attempt.
 
-The backend and frontend pipelines pass their Oracle Deployment names to the
-shared workflow. After a successful push to `develop` or `main`, CI opens or
-updates a GitOps pull request with the published index digest for dev or prod,
+The backend and frontend pipelines pass their Oracle Deployment names and
+version source files to the shared workflow. Each service owns an independent
+stable SemVer version: the frontend reads `package.json`, the backend reads the
+root Maven `pom.xml` (with `-SNAPSHOT` removed), and the AI model-runtime uses
+its `VERSION` file. Use strict `X.Y.Z` versions without a `v` prefix or build
+metadata. Bump a service version before publishing changed production content.
+CI refuses to move an existing stable version tag to a different image digest.
+
+The shared workflow publishes `X.Y.Z` on `main`,
+`X.Y.Z-dev.<short-sha>.<run>.<attempt>` on `develop`, and
+`X.Y.Z-pr.<number>.<short-sha>.<run>.<attempt>` for internal PR previews.
+OCI image tags do not support SemVer `+build` metadata. The workflow exposes
+the raw SHA-256 digest and a complete `package:tag@sha256:digest` reference.
+The backend and frontend pipelines use that complete reference for their
+Oracle GitOps updates. After a successful push to `develop` or `main`, CI opens
+or updates a GitOps pull request with the published reference for dev or prod,
 respectively. CI waits for GitOps validation and secret scanning, verifies the
 single image change, and merges the pull request so Argo CD can sync it. If
 checks fail or time out, the pull request stays open for review. CI checks the
@@ -115,17 +128,21 @@ directly to the GitOps `main` branch. The AI model-runtime release has a
 separate digest update because its deployable image is produced by the reviewed
 model release workflow, not the normal AI base-image build.
 
-| Build | Private GHCR package | Tags |
-| ----- | -------------------- | ---- |
-| Internal PR | `ghcr.io/disease-prediction-aset26/<repo>-pr` | Unique run tags for the index and each architecture, and `pr-<number>` |
-| `develop` | `ghcr.io/disease-prediction-aset26/<repo>-dev` | Unique run tags for the index and each architecture, and `develop` |
-| `main` | `ghcr.io/disease-prediction-aset26/<repo>` | Unique run tags for the index and each architecture, and `main` |
+| Build | Private GHCR package | Published tags |
+| ----- | -------------------- | -------------- |
+| Internal PR | `ghcr.io/disease-prediction-aset26/<repo>-pr` | `X.Y.Z-pr.<number>.<short-sha>.<run>.<attempt>` and `pr-<number>` |
+| `develop` | `ghcr.io/disease-prediction-aset26/<repo>-dev` | `X.Y.Z-dev.<short-sha>.<run>.<attempt>` and `develop` |
+| `main` | `ghcr.io/disease-prediction-aset26/<repo>` | Stable `X.Y.Z` and `main` |
 
-Use the image digest from the job summary to identify an exact image. Preview
-cleanup runs when an internal PR closes and each day at `03:47 UTC`. It keeps
-the current index and both platform images together. The dev
-package keeps a moving `develop` tag and unique run tags; the production package
-keeps a moving `main` tag and unique run tags. The preview package needs
+The publisher also creates architecture and index candidate tags while it
+assembles the multi-platform image. Do not deploy those temporary tags or the
+moving `develop`, `main`, or `pr-<number>` aliases. Deploy the complete
+`package:tag@sha256:digest` reference shown in the job output. Existing
+digest-only GitOps refs migrate to this form at their next normal image update.
+Preview cleanup runs when an internal PR closes and each day at `03:47 UTC`.
+It recognizes both the current SemVer preview format and the legacy preview
+format, and keeps the current index and both platform images together. The
+preview package needs
 **Admin** access for its application repository to delete image versions.
 The publisher retries a push twice (three attempts total) when GHCR reports
 `unknown blob`.
@@ -149,7 +166,10 @@ The local, dev, and production Compose environments are documented in the
 | [preview-cleanup.yml](.github/workflows/preview-cleanup.yml) | Remove outdated PR preview images.              |
 | [validate.yml](.github/workflows/validate.yml)               | Check shared workflows and Python tools.        |
 
-Actions and reusable workflows use full commit SHAs. Dependabot checks the GitHub
+GitHub Actions stay pinned to full commit SHAs, with the matching SemVer release
+in each `uses` comment and in [TOOL-VERSIONS.md](TOOL-VERSIONS.md). Container
+tools use a version tag plus a digest where the registry supports that form.
+Downloaded executables use a version and checksum. Dependabot checks the GitHub
 Actions and scanner image every other Monday at 09:00 Europe/Bucharest. Repositories
 with a `develop` branch target version-update pull requests there. GitHub still targets
 security-update pull requests at the default branch. See [TOOL-VERSIONS.md](TOOL-VERSIONS.md)

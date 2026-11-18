@@ -17,7 +17,7 @@ inputs:
     description: Expected Deployment name.
     required: true
   image:
-    description: Published immutable image reference.
+    description: Published strict SemVer tag pinned to its immutable digest.
     required: true
   source-repository:
     description: Source repository, when a source head must remain current.

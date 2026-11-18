@@ -1,6 +1,6 @@
 # Tool versions
 
-Resolved from official release tags and registries on 2026-10-30.
+Pinned versions used by the shared CI workflows; reviewed on 2026-11-18.
 
 | Tool                              | Version | Commit or digest                                                          | Source                                                                              |
 | --------------------------------- | ------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
@@ -10,7 +10,8 @@ Resolved from official release tags and registries on 2026-10-30.
 | actions/setup-node                | v7.1.0  | `949feb2413d6458794dcd2491c4babbbce0c15c1`                                | [Release](https://github.com/actions/setup-node/releases/tag/v7.1.0)                |
 | actions/upload-artifact           | v7.0.2  | `cf430e030ddbb5b0abf93d22962f4752f3646cd9`                                | [Release](https://github.com/actions/upload-artifact/releases/tag/v7.0.2)           |
 | actions/download-artifact         | v8.0.2  | `9000827ccba6bdab643e8b6fd33ac0654aef8333`                                | [Release](https://github.com/actions/download-artifact/releases/tag/v8.0.2)         |
-| docker/login-action               | v4.7.0  | `81c6f93d4bc991e510b342a00b419b3bb4efc5c6`                                | [Release](https://github.com/docker/login-action/releases/tag/v4.7.0)               |
+| docker/login-action               | v4.8.0  | `8aa5831fb8d48d8f76594c7ddde61ae58019f550`                                | [Release](https://github.com/docker/login-action/releases/tag/v4.8.0)               |
+| actions/create-github-app-token   | v3.3.0  | `64ab729a6294000f5aa4a4bc0b73d1f32bc45510`                                | [Release](https://github.com/actions/create-github-app-token/releases/tag/v3.3.0)   |
 | docker/setup-buildx-action        | v4.4.1  | `f87e5991a6d7451dcb8d9637bfbc97413f497069`                                | [Release](https://github.com/docker/setup-buildx-action/releases/tag/v4.4.1)        |
 | docker/build-push-action          | v7.4.0  | `c3c9e263c25d99ce0380d002d59b67737d91b0dc`                                | [Release](https://github.com/docker/build-push-action/releases/tag/v7.4.0)          |
 | aquasecurity/trivy-action         | v0.36.0 | `ed142fd0673e97e23eac54620cfb913e5ce36c25`                                | [Release](https://github.com/aquasecurity/trivy-action/releases/tag/v0.36.0)        |

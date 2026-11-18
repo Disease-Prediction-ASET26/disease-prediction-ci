@@ -17,7 +17,10 @@ SPEC.loader.exec_module(merge_gitops)
 BASE = "a" * 40
 HEAD = "b" * 40
 SOURCE = "c" * 40
-IMAGE = "ghcr.io/disease-prediction-aset26/disease-prediction-be-dev@sha256:" + "d" * 64
+IMAGE = (
+    "ghcr.io/disease-prediction-aset26/disease-prediction-be-dev:"
+    "0.0.1-dev.aaaaaaa.50.1@sha256:" + "d" * 64
+)
 PATH = "clusters/oracle/disease-prediction/deployments.yaml"
 ORIGINAL = "kind: Deployment\nmetadata:\n  name: backend\nspec:\n  image: old\n"
 UPDATED = ORIGINAL.replace("image: old", "image: " + IMAGE)
@@ -143,6 +146,29 @@ class TargetTests(unittest.TestCase):
             environment.update(change)
             with self.subTest(change=change), self.assertRaises(ValueError):
                 merge_gitops.settings(environment)
+
+    def test_requires_a_strict_semver_tag_and_digest(self):
+        for reference in (
+            IMAGE.replace("0.0.1-dev.aaaaaaa.50.1", "01.0.1-dev.aaaaaaa.50.1"),
+            IMAGE.replace("0.0.1-dev.aaaaaaa.50.1", "0.0.1-dev.aa.50.1"),
+            IMAGE.replace("0.0.1-dev.aaaaaaa.50.1", "0.0.1+build"),
+            IMAGE.replace("0.0.1-dev.aaaaaaa.50.1", "0.0.1-pr.123.aaaaaaa.50.1"),
+            IMAGE.split(":", 1)[0] + "@sha256:" + "d" * 64,
+            IMAGE.replace("d" * 64, "z" * 64),
+        ):
+            with self.subTest(reference=reference), self.assertRaises(ValueError):
+                merge_gitops.settings(
+                    {
+                        "PR_NUMBER": "123",
+                        "EXPECTED_HEAD": HEAD,
+                        "MANIFEST_PATH": PATH,
+                        "DEPLOYMENT": "backend",
+                        "IMAGE_REF": reference,
+                        "SOURCE_REPOSITORY": "Disease-Prediction-ASET26/disease-prediction-be",
+                        "SOURCE_BRANCH": "develop",
+                        "SOURCE_SHA": SOURCE,
+                    }
+                )
 
     def test_exact_deployment_replacement_preserves_other_bytes(self):
         content = (
