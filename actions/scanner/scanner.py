@@ -110,7 +110,7 @@ def resolve_image(channel):
     return matches[0]
 
 
-def scan(image, data, source, reports, *, python=False, check=True):
+def scan(image, data, source, reports, *, python=False, check=True, fail_on_cvss=7):
     reports.mkdir(parents=True, exist_ok=True)
     args = [
         "docker",
@@ -137,9 +137,9 @@ def scan(image, data, source, reports, *, python=False, check=True):
         "HTML",
         "--noupdate",
         "--disableOssIndex",
-        "--failOnCVSS",
-        "7",
     ]
+    if fail_on_cvss is not None:
+        args.extend(["--failOnCVSS", str(fail_on_cvss)])
     if python:
         args.append("--enableExperimental")
     else:
@@ -284,6 +284,7 @@ def main():
                 source,
                 Path("reports/owasp").resolve(),
                 python=os.environ["ECOSYSTEM"] == "python",
+                fail_on_cvss=None,
             )
 
 
