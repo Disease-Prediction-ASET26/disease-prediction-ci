@@ -206,6 +206,27 @@ class PublicationTests(unittest.TestCase):
                 "1.2.3", "sha256:" + "a" * 64, "sha256:" + "b" * 64
             )
 
+    def test_missing_version_tag_is_detected_from_combined_docker_output(self):
+        missing = subprocess.CalledProcessError(
+            1,
+            ["docker", "buildx", "imagetools", "inspect"],
+            output="ERROR: image tag not found",
+        )
+        with patch.object(registry, "docker", side_effect=missing) as docker:
+            self.assertIsNone(registry.remote_digest_if_present("image:1.2.3"))
+        self.assertTrue(docker.call_args.kwargs["capture_stderr"])
+
+        denied = subprocess.CalledProcessError(
+            1,
+            ["docker", "buildx", "imagetools", "inspect"],
+            output="denied: requested access to the resource is denied",
+        )
+        with (
+            patch.object(registry, "docker", side_effect=denied),
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            registry.remote_digest_if_present("image:1.2.3")
+
     def test_registry_manifest_must_match_scanned_config(self):
         registry.verify_remote({"config": {"digest": "sha256:config"}}, "sha256:config")
         registry.verify_remote(
@@ -456,7 +477,7 @@ class MultiPlatformTests(unittest.TestCase):
 
             tag_state = {"release_exists": False}
 
-            def remote_with_immutable_release(reference):
+            def remote_with_immutable_release(reference, **_kwargs):
                 if reference == release_ref and not tag_state["release_exists"]:
                     raise subprocess.CalledProcessError(
                         1, ["docker", "inspect", reference], output="manifest unknown"

@@ -177,9 +177,9 @@ def cleanup(api, *, only=None):
             print(f"Deleted preview version {version_id} for PR {number}")
 
 
-def docker(*args):
+def docker(*args, capture_stderr=False):
     command = ["docker", *args]
-    if args and args[0] == "push":
+    if (args and args[0] == "push") or capture_stderr:
         return subprocess.check_output(
             command, text=True, stderr=subprocess.STDOUT
         ).strip()
@@ -271,7 +271,7 @@ def remote_manifest(reference):
     return json.loads(docker("buildx", "imagetools", "inspect", "--raw", reference))
 
 
-def remote_digest(reference):
+def remote_digest(reference, *, capture_stderr=False):
     info = json.loads(
         docker(
             "buildx",
@@ -280,6 +280,7 @@ def remote_digest(reference):
             reference,
             "--format",
             "{{json .Manifest}}",
+            capture_stderr=capture_stderr,
         )
     )
     digest = info.get("digest", "")
@@ -290,7 +291,9 @@ def remote_digest(reference):
 
 def remote_digest_if_present(reference):
     try:
-        return remote_digest(reference)
+        # Registry clients print 404 details on stderr; capture them so a
+        # missing tag can be distinguished from authentication or network errors.
+        return remote_digest(reference, capture_stderr=True)
     except subprocess.CalledProcessError as error:
         output = (error.output or "").lower()
         if any(
