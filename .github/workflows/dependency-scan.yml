@@ -67,7 +67,7 @@ jobs:
       run: |
         mkdir -p reports
         npm audit --json > reports/npm-audit.json || test -s reports/npm-audit.json
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/dependency-audit@67b642f6386abbecbe1debbce4b41a9eecbd16dc # shared advisory policy
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/dependency-audit@33a55a9593f49ee052ef6b6c15dcfc69300aa250 # shared advisory policy
       if: ${{ inputs.ecosystem == 'npm' }}
       with:
         ecosystem: npm
@@ -102,7 +102,7 @@ jobs:
         SCAN_PATH: ${{ inputs.ecosystem == 'python' && format('{0}/dependency-input', runner.temp) || format('{0}/target',
           github.workspace) }}
         ECOSYSTEM: ${{ inputs.ecosystem }}
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/dependency-audit@67b642f6386abbecbe1debbce4b41a9eecbd16dc # shared advisory policy
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/dependency-audit@33a55a9593f49ee052ef6b6c15dcfc69300aa250 # shared advisory policy
       if: ${{ inputs.ecosystem == 'python' || inputs.ecosystem == 'maven' }}
       with:
         ecosystem: ${{ inputs.ecosystem }}
@@ -115,7 +115,7 @@ jobs:
         "$RUNNER_TEMP/audit-venv/bin/python" -m pip install pip-audit==2.10.1
         mkdir -p reports
         "$RUNNER_TEMP/audit-venv/bin/pip-audit" --requirement "$RUNNER_TEMP/dependency-input/requirements.txt" --no-deps --disable-pip --format json --output reports/pip-audit.json || test -s reports/pip-audit.json
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/dependency-audit@67b642f6386abbecbe1debbce4b41a9eecbd16dc # shared advisory policy
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/dependency-audit@33a55a9593f49ee052ef6b6c15dcfc69300aa250 # shared advisory policy
       if: ${{ !cancelled() && inputs.ecosystem == 'python' && steps.resolve.outcome == 'success' }}
       with:
         ecosystem: python
