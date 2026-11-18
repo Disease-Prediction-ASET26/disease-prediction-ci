@@ -67,7 +67,7 @@ jobs:
       run: |
         mkdir -p reports
         npm audit --json > reports/npm-audit.json || test -s reports/npm-audit.json
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/dependency-audit@be972fbaabe370f707cbe41aba83fad22661f084 # shared advisory policy
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/dependency-audit@67b642f205dcda87d86ef1a985c623bf72c21e6d # shared advisory policy
       if: ${{ inputs.ecosystem == 'npm' }}
       with:
         ecosystem: npm
@@ -88,19 +88,21 @@ jobs:
           cp owasp-suppression.xml "$RUNNER_TEMP/dependency-input/owasp-suppression.xml"
         fi
     - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+      if: ${{ inputs.ecosystem == 'python' || inputs.ecosystem == 'maven' }}
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ github.token }}
     - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@972c865878d40e968853ebcc93fbdcba11751b8c # Dependency-Check 13 with policy gate
       name: OWASP Dependency-Check
+      if: ${{ inputs.ecosystem == 'python' || inputs.ecosystem == 'maven' }}
       with:
         command: scan
       env:
         SCAN_PATH: ${{ inputs.ecosystem == 'python' && format('{0}/dependency-input', runner.temp) || format('{0}/target',
           github.workspace) }}
         ECOSYSTEM: ${{ inputs.ecosystem }}
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/dependency-audit@be972fbaabe370f707cbe41aba83fad22661f084 # shared advisory policy
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/dependency-audit@67b642f205dcda87d86ef1a985c623bf72c21e6d # shared advisory policy
       if: ${{ inputs.ecosystem == 'python' || inputs.ecosystem == 'maven' }}
       with:
         ecosystem: ${{ inputs.ecosystem }}
@@ -113,7 +115,7 @@ jobs:
         "$RUNNER_TEMP/audit-venv/bin/python" -m pip install pip-audit==2.10.1
         mkdir -p reports
         "$RUNNER_TEMP/audit-venv/bin/pip-audit" --requirement "$RUNNER_TEMP/dependency-input/requirements.txt" --no-deps --disable-pip --format json --output reports/pip-audit.json || test -s reports/pip-audit.json
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/dependency-audit@be972fbaabe370f707cbe41aba83fad22661f084 # shared advisory policy
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/dependency-audit@67b642f205dcda87d86ef1a985c623bf72c21e6d # shared advisory policy
       if: ${{ !cancelled() && inputs.ecosystem == 'python' && steps.resolve.outcome == 'success' }}
       with:
         ecosystem: python
