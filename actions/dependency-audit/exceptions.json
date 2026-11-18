@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "exceptions": [
+    {
+      "ecosystem": "npm",
+      "package": "picomatch",
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "expires": "2026-12-18",
+      "reason": "No patched picomatch release is available. This transitive dependency is used by the frontend build and test tools; the production image serves static files. Reassess when upstream or the advisory changes.",
+      "url": "https://github.com/advisories/GHSA-fc5q-39xc-vjpf"
+    }
+  ]
+}

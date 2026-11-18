@@ -1,0 +1,22 @@
+name: Enforce dependency advisory policy
+description: Apply the shared, expiring advisory exceptions to dependency audit reports.
+inputs:
+  ecosystem:
+    description: npm, python, or maven
+    required: true
+  report-format:
+    description: npm-audit, pip-audit, or dependency-check
+    required: true
+  report-path:
+    description: Path to the JSON report in the caller workspace.
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        AUDIT_ECOSYSTEM: ${{ inputs.ecosystem }}
+        AUDIT_REPORT_FORMAT: ${{ inputs.report-format }}
+        AUDIT_REPORT_PATH: ${{ inputs.report-path }}
+        AUDIT_POLICY_DIR: ${{ github.action_path }}
+      run: python3 "$AUDIT_POLICY_DIR/check.py"
