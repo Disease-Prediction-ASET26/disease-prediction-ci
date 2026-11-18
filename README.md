@@ -57,9 +57,12 @@ Store temporary advisory exceptions in
 Each entry must match one ecosystem, package, and advisory ID, include a reason,
 and set an expiry date. The shared checker fails on expired or invalid entries
 and on every unapproved finding. Remove an exception when its advisory is fixed
-or withdrawn. Because workflows use full commit pins, publish policy changes by
-updating the policy action SHA in `dependency-scan.yml`, then update the shared
-workflow SHA in the AI, backend, and frontend workflows. Do not use the
+or withdrawn. For npm metavulnerabilities, the checker follows `via` dependency
+chains to the direct advisory. Peer-dependency cycles are ignored while checking
+those paths, but a cycle without an approved advisory remains blocked. Because
+workflows use full commit pins, publish policy changes by updating the policy
+action SHA in `dependency-scan.yml`, then update the shared workflow SHA in the
+AI, backend, and frontend workflows. Do not use the
 exception file for Dependency-Check CPE false positives; keep those in the
 consumer's `owasp-suppression.xml`.
 

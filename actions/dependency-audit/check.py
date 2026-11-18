@@ -102,8 +102,13 @@ def npm_findings(report, exceptions):
     def is_excepted(package, active=()):
         vulnerability = vulnerabilities[package]
         severity = str(vulnerability.get("severity", "")).lower()
-        if severity not in {"high", "critical"} or package.lower() in active:
+        if severity not in {"high", "critical"}:
             return False, []
+        if package.lower() in active:
+            # npm can report peer-dependency cycles among metavulnerable packages.
+            # Defer that edge; another cause may still anchor the cycle in a
+            # direct advisory. A cycle with no such cause remains unapproved.
+            return None, []
 
         via = vulnerability.get("via") or []
         if not via:
@@ -141,6 +146,8 @@ def npm_findings(report, exceptions):
                 if target_severity not in {"high", "critical"}:
                     continue
                 accepted, target_suppressions = is_excepted(target, active)
+                if accepted is None:
+                    continue
                 if not accepted:
                     return False, []
                 high_causes += 1
@@ -152,7 +159,7 @@ def npm_findings(report, exceptions):
                     suppressions[key] = exception
             else:
                 return False, []
-        return bool(high_causes), list(suppressions.values())
+        return (True if high_causes else None), list(suppressions.values())
 
     for package, vulnerability in vulnerabilities.items():
         severity = str(vulnerability.get("severity", "")).lower()
