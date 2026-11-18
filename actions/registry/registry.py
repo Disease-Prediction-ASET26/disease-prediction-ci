@@ -1,6 +1,7 @@
 """Publish scanned images and retain one successful preview per internal PR."""
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -11,8 +12,24 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-TAG = re.compile(r"pr-(\d+)-([0-9a-f]{40})-(\d+)-(\d+)(?:-(amd64|arm64))?$")
-ALIAS = re.compile(r"pr-(\d+)$")
+_VERSION_SPEC = importlib.util.spec_from_file_location(
+    "registry_version", Path(__file__).with_name("version.py")
+)
+_VERSION = importlib.util.module_from_spec(_VERSION_SPEC)
+_VERSION_SPEC.loader.exec_module(_VERSION)
+
+LEGACY_PR_TAG = re.compile(
+    r"^pr-(?P<number>[1-9][0-9]*)-(?P<sha>[0-9a-f]{40})-"
+    r"(?P<run>[1-9][0-9]*)-(?P<attempt>[1-9][0-9]*)"
+    r"(?P<suffix>-(?:amd64|arm64))?$"
+)
+SEMVER_PR_TAG = re.compile(
+    rf"^(?P<version>{_VERSION.CORE})-pr\."
+    r"(?P<number>[1-9][0-9]*)\.(?P<sha>[0-9a-f]{7})\."
+    r"(?P<run>[1-9][0-9]*)\.(?P<attempt>[1-9][0-9]*)"
+    r"(?P<suffix>-(?:amd64|arm64)|-index\.[1-9][0-9]*\.[1-9][0-9]*)?$"
+)
+ALIAS = re.compile(r"pr-([1-9][0-9]*)$")
 
 
 class GitHub:
@@ -69,11 +86,28 @@ def preview_number(version):
     tags = version.get("metadata", {}).get("container", {}).get("tags", [])
     if not tags:
         return None
-    matches = [TAG.fullmatch(tag) or ALIAS.fullmatch(tag) for tag in tags]
-    if not all(matches):
+    matches = [preview_tag(tag) for tag in tags]
+    if any(match is None for match in matches):
         return None
-    numbers = {int(match[1]) for match in matches}
+    numbers = {int(match["number"]) for match in matches if match is not None}
     return numbers.pop() if len(numbers) == 1 else None
+
+
+def preview_tag(tag):
+    for pattern in (SEMVER_PR_TAG, LEGACY_PR_TAG):
+        match = pattern.fullmatch(tag)
+        if match:
+            return match.groupdict()
+    alias = ALIAS.fullmatch(tag)
+    if alias:
+        return {
+            "number": alias[1],
+            "sha": None,
+            "run": None,
+            "attempt": None,
+            "suffix": None,
+        }
+    return None
 
 
 def deletions(versions, pull, repository):
@@ -94,21 +128,25 @@ def deletions(versions, pull, repository):
     current_tags = [
         match
         for tag in tags
-        if (match := TAG.fullmatch(tag))
-        and match[2] == pull["head"]["sha"]
-        and match[5] is None
+        if (match := preview_tag(tag))
+        and match["sha"]
+        and pull["head"]["sha"].startswith(match["sha"])
+        and match["suffix"] is None
     ]
     if len(current_tags) != 1:
         return []
-    current_run = current_tags[0].group(1, 2, 3, 4)
+    current_run = tuple(
+        current_tags[0][key] for key in ("number", "sha", "run", "attempt")
+    )
     return [
         version["id"]
         for version in candidates
         if version["id"] != current[0]["id"]
         and not any(
-            (match := TAG.fullmatch(tag))
-            and match.group(1, 2, 3, 4) == current_run
-            and match[5] is not None
+            (match := preview_tag(tag))
+            and tuple(match[key] for key in ("number", "sha", "run", "attempt"))
+            == current_run
+            and match["suffix"] is not None
             for tag in version["metadata"]["container"]["tags"]
         )
     ]
@@ -185,11 +223,18 @@ def current_pull(api, number, head):
 
 
 def target(api, event):
+    tag = _VERSION.image_tag(
+        os.environ["IMAGE_VERSION"],
+        event,
+        ref=os.environ["GITHUB_REF"],
+        sha=os.environ["GITHUB_SHA"],
+        run_id=os.environ["GITHUB_RUN_ID"],
+        run_attempt=os.environ["GITHUB_RUN_ATTEMPT"],
+    )
     number = event.get("number") if "pull_request" in event else None
     if number:
         head = event["pull_request"]["head"]["sha"]
         package = api.repo + "-pr"
-        tag = f"pr-{number}-{head}-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}"
         alias = f"pr-{number}"
 
         def current():
@@ -204,7 +249,6 @@ def target(api, event):
             raise ValueError("Image publication requires the develop or main branch")
         branch = ref.removeprefix("refs/heads/")
         package, alias = branches[ref]
-        tag = f"sha-{os.environ['GITHUB_SHA']}-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}"
 
         def current():
             return (
@@ -242,6 +286,27 @@ def remote_digest(reference):
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
         raise ValueError("Registry did not return a valid image digest")
     return digest
+
+
+def remote_digest_if_present(reference):
+    try:
+        return remote_digest(reference)
+    except subprocess.CalledProcessError as error:
+        output = (error.output or "").lower()
+        if any(
+            message in output
+            for message in ("manifest unknown", "no such manifest", "not found")
+        ):
+            return None
+        raise
+
+
+def check_tag_digest(tag, candidate_digest, existing_digest):
+    if existing_digest is not None and existing_digest != candidate_digest:
+        raise ValueError(
+            f"Version tag {tag} already points to a different image; bump the service version"
+        )
+    return existing_digest
 
 
 def stage(api, event):
@@ -333,6 +398,10 @@ def index(api, event):
         verify_remote(remote_manifest(digest), scanned_id, digest.rsplit("@", 1)[1])
         images[architecture] = digest
     reference = f"{repository}:{tag}"
+    candidate_tag = (
+        f"{tag}-index.{os.environ['GITHUB_RUN_ID']}.{os.environ['GITHUB_RUN_ATTEMPT']}"
+    )
+    candidate = f"{repository}:{candidate_tag}"
     with tempfile.TemporaryDirectory() as directory:
         metadata = Path(directory) / "index.json"
         docker(
@@ -340,7 +409,7 @@ def index(api, event):
             "imagetools",
             "create",
             "--tag",
-            reference,
+            candidate,
             "--metadata-file",
             str(metadata),
             *images.values(),
@@ -352,9 +421,17 @@ def index(api, event):
         raise ValueError("Invalid published index digest")
     digest = repository + "@" + digest
     verify_index(remote_manifest(digest), images)
+    if remote_digest(candidate) != digest.rsplit("@", 1)[1]:
+        raise ValueError("Candidate tag does not match the verified index")
     if not current():
         print("Build was superseded; keep the existing alias")
         return
+    existing = remote_digest_if_present(reference)
+    check_tag_digest(tag, digest.rsplit("@", 1)[1], existing)
+    if existing is None:
+        docker("buildx", "imagetools", "create", "--tag", reference, digest)
+    if remote_digest(reference) != digest.rsplit("@", 1)[1]:
+        raise ValueError("Published version tag does not match the verified index")
     docker("buildx", "imagetools", "create", "--tag", f"{repository}:{alias}", digest)
     if remote_digest(f"{repository}:{alias}") != digest.rsplit("@", 1)[1]:
         raise ValueError("Published alias does not match the verified index")
@@ -364,89 +441,23 @@ def index(api, event):
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as handle:
             handle.write(
-                f"Published `{reference}`\n\nScanned image index: `{digest}`\n"
+                f"Published `{reference}@{digest.rsplit('@', 1)[1]}`\n\n"
+                f"Scanned image index digest: `{digest.rsplit('@', 1)[1]}`\n"
             )
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as handle:
-            handle.write(f"digest={digest}\n")
-    if number:
-        cleanup(api, only=number)
-
-
-def publish(api, event):
-    scanned_id = os.environ["SCANNED_IMAGE_ID"]
-    if (
-        docker("image", "inspect", "app-candidate:checked", "--format", "{{.Id}}")
-        != scanned_id
-    ):
-        raise ValueError("Local image changed after scanning")
-    number = event.get("number") if "pull_request" in event else None
-    if number:
-        head = event["pull_request"]["head"]["sha"]
-        if not current_pull(api, number, head):
-            print("PR closed or superseded; skip publication")
-            return
-        package = api.repo + "-pr"
-        tag = f"pr-{number}-{head}-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}"
-        alias = f"pr-{number}"
-    else:
-        ref = os.environ["GITHUB_REF"]
-        branches = {
-            "refs/heads/develop": (api.repo + "-dev", "develop"),
-            "refs/heads/main": (api.repo, "main"),
-        }
-        if ref not in branches:
-            raise ValueError("Image publication requires the develop or main branch")
-        branch = ref.removeprefix("refs/heads/")
-        package, alias = branches[ref]
-        current = api.request(f"/repos/{api.repository}/git/ref/heads/{branch}")[
-            "object"
-        ]["sha"]
-        if current != os.environ["GITHUB_SHA"]:
-            print(f"{branch} build superseded; skip publication")
-            return
-        tag = f"sha-{current}-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}"
-    repository = f"ghcr.io/{api.owner.lower()}/{package.lower()}"
-    reference = repository + ":" + tag
-    docker("tag", "app-candidate:checked", reference)
-    print(push_image(reference))
-    digests = json.loads(
-        docker("image", "inspect", reference, "--format", "{{json .RepoDigests}}")
-    )
-    digest = next(item for item in digests if item.startswith(repository + "@sha256:"))
-    verify_remote(
-        json.loads(docker("manifest", "inspect", digest)),
-        scanned_id,
-        digest.rsplit("@", 1)[1],
-    )
-    if number and not current_pull(api, number, head):
-        cleanup(api, only=number)
-        return
-    if (
-        not number
-        and api.request(f"/repos/{api.repository}/git/ref/heads/{branch}")["object"][
-            "sha"
-        ]
-        != os.environ["GITHUB_SHA"]
-    ):
-        return
-    docker("tag", "app-candidate:checked", repository + ":" + alias)
-    print(push_image(repository + ":" + alias))
-    if os.environ.get("GITHUB_STEP_SUMMARY"):
-        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as handle:
             handle.write(
-                f"Published `{reference}`\n\nScanned and published image: `{digest}`\n"
+                f"digest={digest.rsplit('@', 1)[1]}\n"
+                f"image-reference={reference}@{digest.rsplit('@', 1)[1]}\n"
+                f"tag={tag}\n"
             )
-    if os.environ.get("GITHUB_OUTPUT"):
-        with open(os.environ["GITHUB_OUTPUT"], "a") as handle:
-            handle.write(f"digest={digest}\n")
     if number:
         cleanup(api, only=number)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["publish", "stage", "index", "cleanup"])
+    parser.add_argument("command", choices=["stage", "index", "cleanup"])
     command = parser.parse_args().command
     api = GitHub(os.environ["GITHUB_REPOSITORY"], os.environ["GH_TOKEN"])
     with open(os.environ["GITHUB_EVENT_PATH"]) as handle:
@@ -457,9 +468,7 @@ def main():
         != api.repository
     ):
         raise ValueError("Fork events cannot publish or clean images")
-    if command == "publish":
-        publish(api, event)
-    elif command == "stage":
+    if command == "stage":
         stage(api, event)
     elif command == "index":
         index(api, event)

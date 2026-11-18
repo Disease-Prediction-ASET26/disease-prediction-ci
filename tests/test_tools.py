@@ -24,6 +24,7 @@ def load(name, path):
 
 scanner = load("scanner", "actions/scanner/scanner.py")
 registry = load("registry", "actions/registry/registry.py")
+image_version = load("image_version", "actions/registry/version.py")
 summary = load("summary", "actions/ci-summary/summary.py")
 SHA = "a" * 40
 OTHER_SHA = "b" * 40
@@ -64,8 +65,9 @@ class FakeGitHub:
 class PreviewTests(unittest.TestCase):
     def setUp(self):
         self.old = version(10, f"pr-1-{OTHER_SHA}-10-1")
-        self.current = version(11, f"pr-1-{SHA}-11-1", "pr-1")
-        self.other_pr = version(12, f"pr-2-{SHA}-12-1", "pr-2")
+        self.current_tag = f"0.1.2-pr.1.{SHA[:7]}.11.1"
+        self.current = version(11, self.current_tag, "pr-1")
+        self.other_pr = version(12, f"0.1.2-pr.2.{SHA[:7]}.12.1", "pr-2")
         self.production = version(13, "main", "sha-" + SHA)
 
     def test_keep_current_preview_and_other_prs(self):
@@ -74,13 +76,14 @@ class PreviewTests(unittest.TestCase):
 
     def test_keep_the_current_preview_platforms(self):
         old_arch = version(15, f"pr-1-{OTHER_SHA}-10-1-amd64")
-        amd64 = version(16, f"pr-1-{SHA}-11-1-amd64")
-        arm64 = version(17, f"pr-1-{SHA}-11-1-arm64")
-        items = [self.old, self.current, old_arch, amd64, arm64]
+        amd64 = version(16, self.current_tag + "-amd64")
+        arm64 = version(17, self.current_tag + "-arm64")
+        candidate = version(18, self.current_tag + "-index.11.1")
+        items = [self.old, self.current, old_arch, amd64, arm64, candidate]
         self.assertEqual(registry.deletions(items, pull(), REPOSITORY), [10, 15])
         self.assertEqual(
             registry.deletions(items, pull(state="closed"), REPOSITORY),
-            [10, 11, 15, 16, 17],
+            [10, 11, 15, 16, 17, 18],
         )
 
     def test_closed_pr_removes_only_its_versions(self):
@@ -110,6 +113,7 @@ class PreviewTests(unittest.TestCase):
             version(2, "latest"),
             version(3, "pr-1", "main"),
             version(4, "pr-1", f"pr-2-{SHA}-1-1"),
+            version(5, self.current_tag, "main"),
         ]:
             self.assertIsNone(registry.preview_number(item))
 
@@ -160,24 +164,47 @@ class PublicationTests(unittest.TestCase):
                 "SCANNED_IMAGE_ID": "sha256:config",
                 "GITHUB_RUN_ID": "50",
                 "GITHUB_RUN_ATTEMPT": "1",
+                "GITHUB_REF": "refs/pull/1/merge",
+                "GITHUB_SHA": SHA,
+                "IMAGE_VERSION": "0.1.2",
             },
         )
         self.environment.start()
         self.addCleanup(self.environment.stop)
 
-    def test_changed_local_image_cannot_publish(self):
-        with (
-            patch.object(registry, "docker", return_value="sha256:changed") as docker,
-            self.assertRaises(ValueError),
+    def test_resolves_service_specific_versioned_tags(self):
+        self.assertEqual(
+            registry.target(self.api, self.event)[1],
+            f"0.1.2-pr.1.{SHA[:7]}.50.1",
+        )
+        with patch.dict(
+            os.environ,
+            {"GITHUB_REF": "refs/heads/develop", "GITHUB_SHA": SHA},
         ):
-            registry.publish(self.api, self.event)
-        self.assertEqual(docker.call_count, 1)
+            self.assertEqual(
+                registry.target(self.api, {})[1],
+                f"0.1.2-dev.{SHA[:7]}.50.1",
+            )
+        with patch.dict(
+            os.environ,
+            {"GITHUB_REF": "refs/heads/main", "GITHUB_SHA": SHA},
+        ):
+            self.assertEqual(registry.target(self.api, {})[1], "0.1.2")
 
-    def test_stale_pr_cannot_publish(self):
-        self.api.pulls[1] = pull(sha=OTHER_SHA)
-        with patch.object(registry, "docker", return_value="sha256:config") as docker:
-            registry.publish(self.api, self.event)
-        self.assertEqual(docker.call_count, 1)
+    def test_existing_version_tag_cannot_be_retargeted(self):
+        self.assertIsNone(
+            registry.check_tag_digest("1.2.3", "sha256:" + "a" * 64, None)
+        )
+        self.assertEqual(
+            registry.check_tag_digest(
+                "1.2.3", "sha256:" + "a" * 64, "sha256:" + "a" * 64
+            ),
+            "sha256:" + "a" * 64,
+        )
+        with self.assertRaisesRegex(ValueError, "bump the service version"):
+            registry.check_tag_digest(
+                "1.2.3", "sha256:" + "a" * 64, "sha256:" + "b" * 64
+            )
 
     def test_registry_manifest_must_match_scanned_config(self):
         registry.verify_remote({"config": {"digest": "sha256:config"}}, "sha256:config")
@@ -190,63 +217,106 @@ class PublicationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 registry.verify_remote(manifest, "sha256:config")
 
-    def test_failed_push_never_cleans_previous_preview(self):
+    def test_unknown_blob_push_retries_with_a_limit(self):
         with (
             patch.object(
                 registry,
                 "docker",
                 side_effect=[
-                    "sha256:config",
-                    "",
                     subprocess.CalledProcessError(1, "push", output="unknown blob"),
-                    subprocess.CalledProcessError(1, "push", output="unknown blob"),
-                    subprocess.CalledProcessError(1, "push", output="unknown blob"),
+                    "pushed",
                 ],
+            ) as docker,
+            patch.object(registry.time, "sleep"),
+        ):
+            self.assertEqual(registry.push_image("image:tag"), "pushed")
+        self.assertEqual(docker.call_count, 2)
+
+
+class ImageVersionTests(unittest.TestCase):
+    def test_strict_semver_and_oci_tag_rules(self):
+        for value in ("0.1.0", "1.2.3-rc.1", "1.2.3-dev.abcdef0.12.1"):
+            self.assertEqual(image_version.validate_version(value), value)
+        for value in (
+            "01.2.3",
+            "1.02.3",
+            "1.2",
+            "1.2.3+build.1",
+            "1.2.3-01",
+            "1.2.3-",
+            "v1.2.3",
+        ):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                image_version.validate_version(value)
+        with self.assertRaisesRegex(ValueError, "stable X.Y.Z"):
+            image_version.validate_version("1.2.3-rc.1", stable=True)
+
+    def test_reads_package_maven_snapshot_and_plain_version_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "package.json"
+            package.write_text('{"name":"app","version":"2.3.4"}')
+            self.assertEqual(image_version.read_version(package), "2.3.4")
+            pom = root / "pom.xml"
+            pom.write_text(
+                '<project xmlns="http://maven.apache.org/POM/4.0.0">'
+                "<modelVersion>4.0.0</modelVersion><version>0.0.1-SNAPSHOT</version>"
+                "</project>"
+            )
+            self.assertEqual(image_version.read_version(pom), "0.0.1")
+            plain = root / "VERSION"
+            plain.write_text("3.4.5\n")
+            self.assertEqual(image_version.read_version(plain), "3.4.5")
+
+    def test_generates_stable_development_and_prerelease_tags(self):
+        event = {"number": 12, "pull_request": {"head": {"sha": SHA}}}
+        self.assertEqual(
+            image_version.image_tag(
+                "1.2.3",
+                {},
+                ref="refs/heads/main",
+                sha=SHA,
+                run_id="42",
+                run_attempt="2",
             ),
-            patch.object(registry.time, "sleep"),
-            patch.object(registry, "cleanup") as cleanup,
-            self.assertRaises(subprocess.CalledProcessError),
-        ):
-            registry.publish(self.api, self.event)
-        cleanup.assert_not_called()
-
-    def test_alias_moves_only_after_remote_identity_passes(self):
-        commands = []
-        repository = "ghcr.io/disease-prediction-aset26/disease-prediction-ai-pr"
-        push_attempts = 0
-
-        def docker(*args):
-            nonlocal push_attempts
-            commands.append(args)
-            if args[:2] == ("image", "inspect"):
-                return (
-                    json.dumps([repository + "@sha256:manifest"])
-                    if "RepoDigests" in args[-1]
-                    else "sha256:config"
-                )
-            if args[:2] == ("manifest", "inspect"):
-                return json.dumps({"config": {"digest": "sha256:config"}})
-            if args[0] == "push" and push_attempts == 0:
-                push_attempts += 1
-                raise subprocess.CalledProcessError(
-                    1, ["docker", *args], output="unknown blob"
-                )
-            return ""
-
-        with (
-            patch.object(registry, "docker", side_effect=docker),
-            patch.object(registry.time, "sleep"),
-            patch.object(registry, "cleanup") as cleanup,
-        ):
-            registry.publish(self.api, self.event)
-        manifest_index = next(
-            i
-            for i, command in enumerate(commands)
-            if command[:2] == ("manifest", "inspect")
+            "1.2.3",
         )
-        alias_index = commands.index(("push", repository + ":pr-1"))
-        self.assertLess(manifest_index, alias_index)
-        cleanup.assert_called_once_with(self.api, only=1)
+        self.assertEqual(
+            image_version.image_tag(
+                "1.2.3",
+                {},
+                ref="refs/heads/develop",
+                sha=SHA,
+                run_id="42",
+                run_attempt="2",
+            ),
+            f"1.2.3-dev.{SHA[:7]}.42.2",
+        )
+        self.assertEqual(
+            image_version.image_tag(
+                "1.2.3",
+                event,
+                ref="refs/pull/12/merge",
+                sha=OTHER_SHA,
+                run_id="42",
+                run_attempt="2",
+            ),
+            f"1.2.3-pr.12.{SHA[:7]}.42.2",
+        )
+
+    def test_rejects_invalid_version_sources_and_context(self):
+        for source in ("1.2.3-SNAPSHOT", "1.2.3+build", "01.2.3"):
+            with self.subTest(source=source), self.assertRaises(ValueError):
+                image_version.validate_version(source, stable=True)
+        with self.assertRaisesRegex(ValueError, "develop, main"):
+            image_version.image_tag(
+                "1.2.3",
+                {},
+                ref="refs/heads/feature",
+                sha=SHA,
+                run_id="42",
+                run_attempt="1",
+            )
 
 
 class MultiPlatformTests(unittest.TestCase):
@@ -292,6 +362,9 @@ class MultiPlatformTests(unittest.TestCase):
                     "SCANNED_IMAGE_ID": config_id,
                     "GITHUB_RUN_ID": "50",
                     "GITHUB_RUN_ATTEMPT": "1",
+                    "GITHUB_REF": "refs/pull/1/merge",
+                    "GITHUB_SHA": SHA,
+                    "IMAGE_VERSION": "0.1.2",
                     "IMAGE_ARCH": "amd64",
                     "STAGE_OUTPUT": str(Path(directory) / "stage.json"),
                 },
@@ -313,7 +386,7 @@ class MultiPlatformTests(unittest.TestCase):
                     json.dumps(
                         {
                             "architecture": arch,
-                            "tag": f"pr-1-{SHA}-50-1-{arch}",
+                            "tag": f"0.1.2-pr.1.{SHA[:7]}.50.1-{arch}",
                             "digest": reference,
                             "scanned_id": "sha256:" + "c" * 64,
                         }
@@ -326,6 +399,9 @@ class MultiPlatformTests(unittest.TestCase):
                         "STAGE_DIR": directory,
                         "GITHUB_RUN_ID": "50",
                         "GITHUB_RUN_ATTEMPT": "1",
+                        "GITHUB_REF": "refs/pull/1/merge",
+                        "GITHUB_SHA": SHA,
+                        "IMAGE_VERSION": "0.1.2",
                     },
                 ),
                 patch.object(
@@ -341,10 +417,101 @@ class MultiPlatformTests(unittest.TestCase):
                     return_value={"config": {"digest": "sha256:" + "d" * 64}},
                 ),
                 patch.object(registry, "docker") as docker,
-                self.assertRaisesRegex(ValueError, "differs"),
+                self.assertRaisesRegex(ValueError, "differs from the scanned image"),
             ):
                 registry.index(api, event)
             docker.assert_not_called()
+
+    def test_index_publishes_version_tag_and_digest_reference(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "outputs"
+            summary_path = Path(directory) / "summary"
+            for architecture, reference in self.digests.items():
+                (Path(directory) / f"stage-{architecture}.json").write_text(
+                    json.dumps(
+                        {
+                            "architecture": architecture,
+                            "tag": f"1.2.3-{architecture}",
+                            "digest": reference,
+                            "scanned_id": "sha256:" + "c" * 64,
+                        }
+                    )
+                )
+
+            index_digest = "sha256:" + "e" * 64
+            candidate_ref = self.repository + ":1.2.3-index.50.1"
+            release_ref = self.repository + ":1.2.3"
+            alias_ref = self.repository + ":main"
+            index_tags = {candidate_ref, release_ref, alias_ref}
+
+            def remote(reference):
+                if reference in index_tags:
+                    return index_digest
+                return self.digests[reference.rsplit("-", 1)[1]].rsplit("@", 1)[1]
+
+            def manifest(reference):
+                if reference.endswith(index_digest):
+                    return self.manifest
+                return {"config": {"digest": "sha256:" + "c" * 64}}
+
+            tag_state = {"release_exists": False}
+
+            def remote_with_immutable_release(reference):
+                if reference == release_ref and not tag_state["release_exists"]:
+                    raise subprocess.CalledProcessError(
+                        1, ["docker", "inspect", reference], output="manifest unknown"
+                    )
+                return remote(reference)
+
+            def docker(*args):
+                if args[:3] == ("buildx", "imagetools", "create"):
+                    if "--metadata-file" in args:
+                        metadata = Path(args[args.index("--metadata-file") + 1])
+                        metadata.write_text(
+                            json.dumps(
+                                {"containerimage.descriptor": {"digest": index_digest}}
+                            )
+                        )
+                    elif "--tag" in args:
+                        tag = args[args.index("--tag") + 1]
+                        if tag == release_ref:
+                            tag_state["release_exists"] = True
+                return ""
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "STAGE_DIR": directory,
+                        "GITHUB_RUN_ID": "50",
+                        "GITHUB_RUN_ATTEMPT": "1",
+                        "GITHUB_REF": "refs/heads/main",
+                        "GITHUB_SHA": SHA,
+                        "IMAGE_VERSION": "1.2.3",
+                        "GITHUB_OUTPUT": str(output),
+                        "GITHUB_STEP_SUMMARY": str(summary_path),
+                    },
+                ),
+                patch.object(
+                    registry,
+                    "target",
+                    return_value=(self.repository, "1.2.3", "main", None, lambda: True),
+                ),
+                patch.object(
+                    registry, "remote_digest", side_effect=remote_with_immutable_release
+                ),
+                patch.object(registry, "remote_manifest", side_effect=manifest),
+                patch.object(registry, "docker", side_effect=docker),
+            ):
+                registry.index(FakeGitHub(), {})
+
+            self.assertIn(f"digest={index_digest}", output.read_text(encoding="utf-8"))
+            self.assertIn(
+                f"image-reference={release_ref}@{index_digest}",
+                output.read_text(encoding="utf-8"),
+            )
+            self.assertIn("tag=1.2.3", output.read_text(encoding="utf-8"))
+            self.assertIn(release_ref, summary_path.read_text(encoding="utf-8"))
 
 
 class SnapshotTests(unittest.TestCase):

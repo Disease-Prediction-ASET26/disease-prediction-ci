@@ -14,6 +14,14 @@ OWNER = "Disease-Prediction-ASET26"
 REPOSITORY = OWNER + "/disease-prediction-gitops"
 REPO_PATH = "/repos/" + REPOSITORY
 SHA = re.compile(r"[0-9a-f]{40}$")
+CORE = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+SEMVER_IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+SEMVER = re.compile(
+    rf"{CORE}"
+    rf"(?:-{SEMVER_IDENTIFIER}(?:\.{SEMVER_IDENTIFIER})*)?$"
+)
+STABLE_TAG = re.compile(rf"^{CORE}$")
+DEV_TAG = re.compile(rf"^{CORE}-dev\.[0-9a-f]{{7}}\.[1-9][0-9]*\.[1-9][0-9]*$")
 REQUIRED_CHECKS = {"validate", "secret-scan / secret-scan"}
 MERGE_RETRY_LIMIT = 4
 
@@ -108,8 +116,21 @@ def settings(environ):
     if target is None:
         raise ValueError("Unsupported GitOps manifest and Deployment")
     package, branch, source_repository = target
-    if not re.fullmatch(re.escape(package) + r"@sha256:[0-9a-f]{64}", image):
-        raise ValueError("Image digest does not match the target package")
+    match = re.fullmatch(
+        re.escape(package) + r":(?P<tag>[^@]+)@(?P<digest>sha256:[0-9a-f]{64})",
+        image,
+    )
+    if not match or not SEMVER.fullmatch(match["tag"]):
+        raise ValueError(
+            "Image reference must use a strict SemVer tag and SHA-256 digest"
+        )
+    if branch.endswith("-dev"):
+        if not DEV_TAG.fullmatch(match["tag"]):
+            raise ValueError(
+                "Development image tag does not match the dev prerelease form"
+            )
+    elif not STABLE_TAG.fullmatch(match["tag"]):
+        raise ValueError("Production image tag must be a stable X.Y.Z version")
     source = (
         environ.get("SOURCE_REPOSITORY", ""),
         environ.get("SOURCE_BRANCH", ""),

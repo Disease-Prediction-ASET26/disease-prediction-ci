@@ -59,6 +59,35 @@ class WorkflowTests(unittest.TestCase):
             )
         )
 
+    def test_container_workflow_publishes_semver_and_digest_references(self):
+        document = workflow("container.yml")
+        on = document.get("on", document.get(True))
+        call = on["workflow_call"]
+        self.assertTrue(call["inputs"]["version-file"]["required"])
+        self.assertIn("image-reference", call["outputs"])
+        self.assertIn("image-digest", call["outputs"])
+        steps = document["jobs"]["containerize"]["steps"]
+        version = next(step for step in steps if step.get("id") == "version")
+        build = next(step for step in steps if step.get("name") == "containerize")
+        self.assertIn("registry/version.py", version["run"])
+        self.assertIn("org.opencontainers.image.version", build["with"]["labels"])
+        stage = next(
+            step for step in steps if step.get("with", {}).get("command") == "stage"
+        )
+        self.assertIn("IMAGE_VERSION", stage["env"])
+        publisher = document["jobs"]["publish"]
+        self.assertIn("image-reference", publisher["outputs"])
+        self.assertIn("image-digest", publisher["outputs"])
+        updater = document["jobs"]["update-gitops"]
+        self.assertIn("outputs.image-reference", updater["if"])
+        self.assertTrue(
+            any(
+                step.get("with", {}).get("image")
+                == "${{ needs.publish.outputs.image-reference }}"
+                for step in updater["steps"]
+            )
+        )
+
     def test_preview_lock_is_separate_from_branch_release_locks(self):
         publisher = workflow("container.yml")["concurrency"]
         cleanup = workflow("preview-cleanup.yml")["jobs"]["cleanup"]["concurrency"]

@@ -2,12 +2,18 @@ name: Publish or clean application images
 description: Publish scanned images or clean preview versions only.
 inputs:
   command:
-    description: publish, stage, index, or cleanup
+    description: stage, index, or cleanup
     required: true
 outputs:
   digest:
-    description: Immutable digest reference of the published image.
+    description: Raw SHA-256 digest of the published multi-platform image.
     value: ${{ steps.registry.outputs.digest }}
+  image-reference:
+    description: Published SemVer tag pinned to its verified SHA-256 digest.
+    value: ${{ steps.registry.outputs.image-reference }}
+  tag:
+    description: SemVer-compatible tag used for the published image.
+    value: ${{ steps.registry.outputs.tag }}
 runs:
   using: composite
   steps:
