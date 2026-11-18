@@ -30,7 +30,8 @@ jobs:
         case "$ECOSYSTEM" in
           python) test -f requirements.txt ;;
           maven) test -n "$BUILD_ARTIFACT" ;;
-          *) echo "::error::Supported ecosystems: python, maven"; exit 1 ;;
+          npm) test -f package.json && test -f package-lock.json && test -f .nvmrc ;;
+          *) echo "::error::Supported ecosystems: npm, python, maven"; exit 1 ;;
         esac
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       if: ${{ inputs.ecosystem == 'maven' }}
@@ -52,6 +53,26 @@ jobs:
         cache: pip
         cache-dependency-path: requirements.txt
       if: ${{ inputs.ecosystem == 'python' }}
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      if: ${{ inputs.ecosystem == 'npm' }}
+      with:
+        node-version-file: .nvmrc
+        cache: npm
+        cache-dependency-path: package-lock.json
+    - name: Install Node dependencies
+      if: ${{ inputs.ecosystem == 'npm' }}
+      run: npm ci
+    - name: Run npm audit
+      if: ${{ inputs.ecosystem == 'npm' }}
+      run: |
+        mkdir -p reports
+        npm audit --json > reports/npm-audit.json || test -s reports/npm-audit.json
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/dependency-audit@be972fbaabe370f707cbe41aba83fad22661f084 # shared advisory policy
+      if: ${{ inputs.ecosystem == 'npm' }}
+      with:
+        ecosystem: npm
+        report-format: npm-audit
+        report-path: reports/npm-audit.json
     - name: Resolve all Python application dependencies
       id: resolve
       if: ${{ inputs.ecosystem == 'python' }}
@@ -71,7 +92,7 @@ jobs:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ github.token }}
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@8651d87e2c9a0dfcb55fcad9b8e9dfe9885cb75f # Dependency-Check 13 with current Maven Central search
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@972c865878d40e968853ebcc93fbdcba11751b8c # Dependency-Check 13 with policy gate
       name: OWASP Dependency-Check
       with:
         command: scan
@@ -79,13 +100,25 @@ jobs:
         SCAN_PATH: ${{ inputs.ecosystem == 'python' && format('{0}/dependency-input', runner.temp) || format('{0}/target',
           github.workspace) }}
         ECOSYSTEM: ${{ inputs.ecosystem }}
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/dependency-audit@be972fbaabe370f707cbe41aba83fad22661f084 # shared advisory policy
+      if: ${{ inputs.ecosystem == 'python' || inputs.ecosystem == 'maven' }}
+      with:
+        ecosystem: ${{ inputs.ecosystem }}
+        report-format: dependency-check
+        report-path: reports/owasp/dependency-check-report.json
     - name: Python advisory audit
       if: ${{ !cancelled() && inputs.ecosystem == 'python' && steps.resolve.outcome == 'success' }}
       run: |
         python -m venv "$RUNNER_TEMP/audit-venv"
         "$RUNNER_TEMP/audit-venv/bin/python" -m pip install pip-audit==2.10.1
         mkdir -p reports
-        "$RUNNER_TEMP/audit-venv/bin/pip-audit" --requirement "$RUNNER_TEMP/dependency-input/requirements.txt" --no-deps --disable-pip --format json --output reports/pip-audit.json
+        "$RUNNER_TEMP/audit-venv/bin/pip-audit" --requirement "$RUNNER_TEMP/dependency-input/requirements.txt" --no-deps --disable-pip --format json --output reports/pip-audit.json || test -s reports/pip-audit.json
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/dependency-audit@be972fbaabe370f707cbe41aba83fad22661f084 # shared advisory policy
+      if: ${{ !cancelled() && inputs.ecosystem == 'python' && steps.resolve.outcome == 'success' }}
+      with:
+        ecosystem: python
+        report-format: pip-audit
+        report-path: reports/pip-audit.json
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       if: ${{ always() }}
       with:

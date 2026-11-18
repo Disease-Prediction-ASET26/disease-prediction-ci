@@ -41,17 +41,24 @@ Fork pull request workflows are disabled.
 
 The AI and backend pipelines use OWASP Dependency-Check. The AI pipeline also
 uses `pip-audit` to check resolved Python dependencies. The frontend pipeline
-uses `npm audit` with a HIGH severity threshold. The shared scan workflow
-currently supports Python and Maven.
+uses `npm audit`. The shared scan workflow applies the same advisory policy to
+all three repositories.
 
-Dependency-Check fails at CVSS 7 or higher. `pip-audit` fails on any advisory.
-Scanner errors fail the job. Maven scans use Sonatype's current Central Search
-Solr API endpoint. The credential-dependent OSS Index analyzer is disabled. A
-consumer may provide a root-level `owasp-suppression.xml` for
-documented false positives. The shared workflow forwards it beside the Python
-dependency list or Maven build artifact before scanning. Keep exceptions
-narrow by matching the affected package and vulnerability, and explain why each
-exception is safe.
+Dependency-Check fails at CVSS 7 or higher, `pip-audit` fails on any advisory,
+and `npm audit` fails on HIGH or CRITICAL advisories. Scanner errors fail the
+job. Maven scans use Sonatype's current Central Search Solr API endpoint. The
+credential-dependent OSS Index analyzer is disabled. A consumer may provide a
+root-level `owasp-suppression.xml` for documented false positives. The shared
+workflow forwards it beside the Python dependency list or Maven build artifact
+before scanning.
+
+Store temporary advisory exceptions in
+[`actions/dependency-audit/exceptions.json`](actions/dependency-audit/exceptions.json).
+Each entry must match one ecosystem, package, and advisory ID, include a reason,
+and set an expiry date. The shared checker fails on expired or invalid entries
+and on every unapproved finding. Remove an exception when its advisory is fixed
+or withdrawn. Do not use the exception file for Dependency-Check CPE false
+positives; keep those in the consumer's `owasp-suppression.xml`.
 
 The shared updater refreshes the OWASP database every day at `03:17 UTC`. It
 publishes a private GHCR snapshot only after the smoke test passes. A failed
@@ -130,7 +137,7 @@ The local, dev, and production Compose environments are documented in the
 | Workflow                                                     | Purpose                                         |
 | ------------------------------------------------------------ | ----------------------------------------------- |
 | [secret-scan.yml](.github/workflows/secret-scan.yml)          | Find secrets in commits introduced by a change. |
-| [dependency-scan.yml](.github/workflows/dependency-scan.yml) | Scan Python and Maven dependencies.             |
+| [dependency-scan.yml](.github/workflows/dependency-scan.yml) | Scan npm, Python, and Maven dependencies.        |
 | [owasp-refresh.yml](.github/workflows/owasp-refresh.yml)     | Update and publish the OWASP database snapshot. |
 | [container.yml](.github/workflows/container.yml)             | Select, build, scan, and publish a dev or production image. |
 | [preview-cleanup.yml](.github/workflows/preview-cleanup.yml) | Remove outdated PR preview images.              |
