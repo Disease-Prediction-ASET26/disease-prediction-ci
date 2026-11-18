@@ -97,31 +97,97 @@ def npm_findings(report, exceptions):
 
     blocked = []
     suppressed = []
+    packages = {package.lower(): package for package in vulnerabilities}
+
+    def is_excepted(package, active=()):
+        vulnerability = vulnerabilities[package]
+        severity = str(vulnerability.get("severity", "")).lower()
+        if severity not in {"high", "critical"} or package.lower() in active:
+            return False, []
+
+        via = vulnerability.get("via") or []
+        if not via:
+            return False, []
+        active = {*active, package.lower()}
+        suppressions = {}
+        high_causes = 0
+        for cause in via:
+            if isinstance(cause, dict):
+                cause_severity = str(cause.get("severity", severity)).lower()
+                if cause_severity not in {"high", "critical"}:
+                    continue
+                high_causes += 1
+                identifiers = advisory_ids(
+                    cause.get("id"),
+                    cause.get("url"),
+                    cause.get("title"),
+                    cause.get("name"),
+                )
+                exception = matches_exception(exceptions, "npm", package, identifiers)
+                if not exception:
+                    return False, []
+                key = (
+                    exception["package_normalized"],
+                    exception["advisory_normalized"],
+                )
+                suppressions[key] = exception
+            elif isinstance(cause, str):
+                target = packages.get(cause.lower())
+                if target is None:
+                    return False, []
+                target_severity = str(
+                    vulnerabilities[target].get("severity", "")
+                ).lower()
+                if target_severity not in {"high", "critical"}:
+                    continue
+                accepted, target_suppressions = is_excepted(target, active)
+                if not accepted:
+                    return False, []
+                high_causes += 1
+                for exception in target_suppressions:
+                    key = (
+                        exception["package_normalized"],
+                        exception["advisory_normalized"],
+                    )
+                    suppressions[key] = exception
+            else:
+                return False, []
+        return bool(high_causes), list(suppressions.values())
+
     for package, vulnerability in vulnerabilities.items():
         severity = str(vulnerability.get("severity", "")).lower()
         if severity not in {"high", "critical"}:
             continue
-        via = vulnerability.get("via") or []
-        advisories = [item for item in via if isinstance(item, dict)]
-        if not advisories:
-            blocked.append(f"{package}: {severity} finding has no advisory identifier")
-            continue
-        for advisory in advisories:
-            advisory_severity = str(advisory.get("severity", severity)).lower()
-            if advisory_severity not in {"high", "critical"}:
-                continue
-            identifiers = advisory_ids(
-                advisory.get("url"),
-                advisory.get("title"),
-                advisory.get("name"),
+        accepted, package_suppressions = is_excepted(package)
+        if accepted:
+            suppressed.extend(
+                (exception["package"], exception) for exception in package_suppressions
             )
-            exception = matches_exception(exceptions, "npm", package, identifiers)
-            if exception:
-                suppressed.append((package, exception))
-            else:
-                label = ", ".join(sorted(identifiers)) or "unknown advisory"
-                blocked.append(f"{package}: {severity} {label}")
-    return blocked, suppressed
+        else:
+            via = vulnerability.get("via") or []
+            identifiers = advisory_ids(
+                *[
+                    value
+                    for cause in via
+                    if isinstance(cause, dict)
+                    for value in (
+                        cause.get("id"),
+                        cause.get("url"),
+                        cause.get("title"),
+                        cause.get("name"),
+                    )
+                ]
+            )
+            label = ", ".join(sorted(identifiers)) or "unapproved metavulnerability"
+            blocked.append(f"{package}: {severity} {label}")
+    unique_suppressions = {}
+    for package, exception in suppressed:
+        key = (
+            normalize_package(package, "npm"),
+            exception["advisory_normalized"],
+        )
+        unique_suppressions.setdefault(key, (package, exception))
+    return blocked, list(unique_suppressions.values())
 
 
 def pip_findings(report, exceptions):
@@ -135,7 +201,7 @@ def pip_findings(report, exceptions):
         package = dependency.get("name", "")
         for vulnerability in dependency.get("vulns") or []:
             identifiers = advisory_ids(
-                vulnerability.get("id"), *vulnerability.get("aliases", [])
+                vulnerability.get("id"), *(vulnerability.get("aliases") or [])
             )
             exception = matches_exception(exceptions, "python", package, identifiers)
             if exception:
