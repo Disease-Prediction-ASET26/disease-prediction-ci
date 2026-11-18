@@ -57,8 +57,11 @@ Store temporary advisory exceptions in
 Each entry must match one ecosystem, package, and advisory ID, include a reason,
 and set an expiry date. The shared checker fails on expired or invalid entries
 and on every unapproved finding. Remove an exception when its advisory is fixed
-or withdrawn. Do not use the exception file for Dependency-Check CPE false
-positives; keep those in the consumer's `owasp-suppression.xml`.
+or withdrawn. Because workflows use full commit pins, publish policy changes by
+updating the policy action SHA in `dependency-scan.yml`, then update the shared
+workflow SHA in the AI, backend, and frontend workflows. Do not use the
+exception file for Dependency-Check CPE false positives; keep those in the
+consumer's `owasp-suppression.xml`.
 
 The shared updater refreshes the OWASP database every day at `03:17 UTC`. It
 publishes a private GHCR snapshot only after the smoke test passes. A failed
