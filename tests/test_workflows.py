@@ -25,6 +25,32 @@ class WorkflowTests(unittest.TestCase):
                         condition,
                     )
 
+    def test_secret_scan_reports_finding_metadata_without_secret_values(self):
+        steps = workflow("secret-scan.yml")["jobs"]["secret-scan"]["steps"]
+        scan = next(
+            step
+            for step in steps
+            if step.get("name") == "Scan changed commits for secrets"
+        )
+        run = scan["run"]
+
+        self.assertIn("--redact=100", run)
+        self.assertIn("--report-format json", run)
+        self.assertIn("--report-path", run)
+        for field in (
+            "RuleID",
+            "File",
+            "StartLine",
+            "EndLine",
+            "Commit",
+            "Fingerprint",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, run)
+        for field in ("Secret", "Match", "Line"):
+            with self.subTest(field=field):
+                self.assertNotIn(f".{field}", run)
+
     def test_publish_requires_fixable_vulnerability_scan_to_pass(self):
         steps = workflow("container.yml")["jobs"]["containerize"]["steps"]
         build = next(step for step in steps if step.get("name") == "containerize")

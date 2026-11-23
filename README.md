@@ -75,10 +75,12 @@ own copy. A missing or more-than-48-hour-old snapshot fails the scan.
 
 Each application and GitOps pipeline calls the shared Gitleaks workflow on pull
 requests and pushes. It scans the commits introduced by that change, redacts
-detected values from logs, and fails the pipeline when it finds a secret. The
-scanner does not validate candidate credentials against provider APIs. GitHub
-secret scanning remains responsible for scanning repository history. The
-Gitleaks binary is pinned by version and SHA-256 checksum.
+detected values from logs, and fails the pipeline when it finds a secret. On a
+finding, the check prints the rule, file, line range, commit, and fingerprint;
+it does not print the matched value or upload the raw report. The scanner does
+not validate candidate credentials against provider APIs. GitHub secret
+scanning remains responsible for scanning repository history. The Gitleaks
+binary is pinned by version and SHA-256 checksum.
 
 To run a normal refresh manually, open **Actions > Refresh OWASP snapshot** in
 this repository. Select **Run workflow** on `main`. Leave `bootstrap` disabled
