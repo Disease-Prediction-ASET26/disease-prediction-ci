@@ -93,7 +93,7 @@ jobs:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ github.token }}
-    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@972c865878d40e968853ebcc93fbdcba11751b8c # Dependency-Check 13 with policy gate
+    - uses: Disease-Prediction-ASET26/disease-prediction-ci/actions/scanner@7b4c5ee7f2edbe883419d556ba6f4c702fa48f0f # Dependency-Check 13 with policy gate
       name: OWASP Dependency-Check
       if: ${{ inputs.ecosystem == 'python' || inputs.ecosystem == 'maven' }}
       with:
