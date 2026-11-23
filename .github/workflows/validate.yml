@@ -15,7 +15,7 @@ concurrency:
 jobs:
   secret-scan:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    uses: Disease-Prediction-ASET26/disease-prediction-ci/.github/workflows/secret-scan.yml@8651d87e2c9a0dfcb55fcad9b8e9dfe9885cb75f # secret-scan
+    uses: Disease-Prediction-ASET26/disease-prediction-ci/.github/workflows/secret-scan.yml@7b4c5ee7f2edbe883419d556ba6f4c702fa48f0f # secret-scan
     permissions:
       contents: read
   validate:
