@@ -370,6 +370,40 @@ def updated_head(api, settings, old_head, deadline):
     raise TimeoutError("Timed out updating the GitOps PR branch")
 
 
+def delete_merged_branch(api, settings, merged_head):
+    ref = f"heads/{settings['branch']}"
+    read_path = f"{REPO_PATH}/git/ref/{ref}"
+    delete_path = f"{REPO_PATH}/git/refs/{ref}"
+    try:
+        branch = api.request(read_path)
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            print("GitOps update branch was already deleted.")
+            return
+        raise
+    if branch.get("object", {}).get("sha") != merged_head:
+        print("GitOps update branch moved after merge; leaving it in place.")
+        return
+    try:
+        api.request(delete_path, method="DELETE")
+    except urllib.error.HTTPError as error:
+        if error.code in (404, 422):
+            try:
+                api.request(read_path)
+            except urllib.error.HTTPError as missing:
+                if missing.code == 404:
+                    print("GitOps update branch was already deleted.")
+                    return
+                raise ValueError(
+                    f"Could not verify GitOps branch deletion: "
+                    f"{http_error_detail(missing)}"
+                ) from missing
+        raise ValueError(
+            f"GitOps branch deletion failed: {http_error_detail(error)}"
+        ) from error
+    print("Deleted the merged GitOps update branch.")
+
+
 def merge(api, settings):
     deadline = time.monotonic() + settings["timeout"]
     head = settings["head"]
@@ -448,6 +482,7 @@ def merge(api, settings):
         if not result.get("merged"):
             raise ValueError("GitHub did not merge the GitOps PR")
         print(f"Merged GitOps PR #{settings['number']} after validation.")
+        delete_merged_branch(api, settings, head)
         return
     raise TimeoutError("Timed out waiting for GitOps checks")
 

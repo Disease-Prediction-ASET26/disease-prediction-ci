@@ -110,6 +110,13 @@ class FakeAPI:
             return {"sha": self.source}
         if path.endswith("/git/ref/heads/main"):
             return {"object": {"sha": self.base}}
+        if path.startswith(f"{merge_gitops.REPO_PATH}/git/ref/heads/"):
+            return {"object": {"sha": self.current_pull["head"]["sha"]}}
+        if (
+            path.startswith(f"{merge_gitops.REPO_PATH}/git/refs/heads/")
+            and method == "DELETE"
+        ):
+            return None
         if "/compare/" in path:
             return {"behind_by": 0}
         if path.endswith("/check-runs?filter=latest&per_page=100"):
