@@ -1,5 +1,5 @@
 name: Merge a checked GitOps image update
-description: Verify one image change and its GitOps checks before merging the pull request.
+description: Verify one image change and its GitOps checks, then merge the pull request and delete its branch.
 inputs:
   token:
     description: GitHub App installation token with GitOps Contents and Pull requests write permissions.
